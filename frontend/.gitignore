@@ -1,0 +1,26 @@
+# Secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials*.json
+# Local files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.log
+*.zip
+*.tar.gz
+# Generated files
+node_modules/
+dist/
+build/
+coverage/
+project.private.config.json
+# Development screenshots
+screenshots/
