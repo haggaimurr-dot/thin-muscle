@@ -24,3 +24,7 @@ coverage/
 project.private.config.json
 # Development screenshots
 screenshots/
+
+# Browser test output
+playwright-report/
+test-results/
