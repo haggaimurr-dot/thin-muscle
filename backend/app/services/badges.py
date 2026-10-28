@@ -91,3 +91,59 @@ def grant(user_id, data, db):
             db.add(BadgeAward(user_id=user_id, badge_id=badge["id"]))
             fresh.append(badge)
     return fresh
+
+
+def weekly_goals(data, today=None):
+    today = today or datetime.now(ZoneInfo("Asia/Shanghai")).date()
+    monday = today - timedelta(days=today.weekday())
+    week = monday.isoformat()
+    current = {
+        "done": {week: data.get("done", {}).get(week, {})},
+        "protein": {week: data.get("protein", {}).get(week, {})},
+        "logs": {
+            key: entries
+            for key, entries in data.get("logs", {}).items()
+            if key.startswith(week + "|")
+        },
+    }
+    stats = metrics(current, today=today)
+    recovery = sum(
+        current["done"][week].get(str(day)) is True
+        and monday + timedelta(days=day - 1) <= today
+        for day in (2, 4, 6, 7)
+    )
+    return {
+        "week": week,
+        "items": [
+            {
+                "id": "strength",
+                "title": "规律力量训练",
+                "description": "本周完成 2 个力量日，按计划循序渐进。",
+                "current": stats["strength_days"],
+                "target": 2,
+                "unit": "天",
+                "icon": "training",
+                "action": "/training",
+            },
+            {
+                "id": "recovery",
+                "title": "给身体恢复时间",
+                "description": "本周完成 1 个恢复日，散步或拉伸也算。",
+                "current": recovery,
+                "target": 1,
+                "unit": "天",
+                "icon": "leaf",
+                "action": "/training?view=week",
+            },
+            {
+                "id": "reflection",
+                "title": "听听身体怎么说",
+                "description": "本周至少一天为训练写下心得。",
+                "current": stats["journal_days"],
+                "target": 1,
+                "unit": "天",
+                "icon": "edit",
+                "action": "/training?view=history",
+            },
+        ],
+    }

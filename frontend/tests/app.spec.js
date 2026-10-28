@@ -435,3 +435,33 @@ test('badge gallery rewards reflection once per date and keeps earned badges aft
     expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
   }
 })
+
+test('weekly goals and wearing an earned badge work on mobile and survive reload', async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/#/training')
+  await page
+    .locator('.exercise-row')
+    .first()
+    .getByRole('button', { name: '记录', exact: true })
+    .click()
+  await page.getByRole('dialog').getByLabel('次数 / 时长').fill('5')
+  await page.getByRole('dialog').getByLabel('训练心得').fill('保持专注')
+  await page.getByRole('button', { name: '保存记录', exact: true }).click()
+  await page.goto('/#/badges')
+  await expect(page.locator('.weekly-goal').filter({ hasText: '听听身体怎么说' })).toContainText(
+    '已达成',
+  )
+  await page.locator('.badge-card.earned').filter({ hasText: '倾听身体' }).click()
+  await page.getByRole('button', { name: '佩戴这枚徽章', exact: true }).click()
+  await expect(page.getByRole('button', { name: '取消佩戴', exact: true })).toBeVisible()
+  await page.getByRole('button', { name: '关闭', exact: true }).click()
+  await expect(page.locator('.badge-card.earned')).toContainText('正在佩戴')
+  await page.reload()
+  await expect(page.locator('.badge-card.earned')).toContainText('正在佩戴')
+  await page.goto('/#/')
+  await expect(page.locator('.badge-dashboard')).toContainText('正在佩戴：倾听身体')
+  await expect(page.locator('.weekly-goal')).toHaveCount(3)
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+})

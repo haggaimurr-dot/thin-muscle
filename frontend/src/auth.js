@@ -1,4 +1,5 @@
 import { reactive } from 'vue'
+import { resetBadgeProfile, refreshBadgeProfile } from './badgeProfile'
 import { api, setCsrf, demoMode } from './api'
 import { connectSync, disconnectSync, state, flushSync } from './store'
 export const auth = reactive({ ready: false, user: null, error: '' })
@@ -12,6 +13,7 @@ export async function initAuth() {
     setCsrf(data.csrf)
     auth.user = data.user
     await connectSync(data.user.id)
+    refreshBadgeProfile().catch(() => {})
   } catch (error) {
     if (error.status !== 401) auth.error = error.message
   } finally {
@@ -20,9 +22,11 @@ export async function initAuth() {
 }
 export async function signIn(credentials, register = false, endpoint = null) {
   const data = await api('/auth/' + (endpoint || (register ? 'register' : 'login')), credentials)
+  resetBadgeProfile()
   setCsrf(data.csrf)
   auth.user = data.user
   await connectSync(data.user.id)
+  refreshBadgeProfile().catch(() => {})
 }
 export async function signOut() {
   if (['pending', 'saving'].includes(state.syncStatus)) {
@@ -34,11 +38,13 @@ export async function signOut() {
   await api('/auth/logout', {})
   setCsrf('')
   auth.user = null
+  resetBadgeProfile()
   disconnectSync()
 }
 window.addEventListener('session-expired', () => {
   auth.user = null
   setCsrf('')
+  resetBadgeProfile()
   disconnectSync()
   auth.error = '登录已过期，请重新登录；待同步记录已保留在本机缓存'
 })

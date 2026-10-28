@@ -74,3 +74,9 @@ class BadgeAward(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
     badge_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     earned_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class BadgeProfile(Base):
+    __tablename__ = "badge_profiles"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    featured_id: Mapped[str | None] = mapped_column(String(64), nullable=True)

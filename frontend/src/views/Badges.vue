@@ -3,9 +3,27 @@ import { computed, ref, onMounted, onBeforeUnmount, watch } from 'vue'
 import Icon from '../components/Icon.vue'
 import BadgeMark from '../components/BadgeMark.vue'
 import Modal from '../components/Modal.vue'
+import WeeklyGoals from '../components/WeeklyGoals.vue'
+import { featuredBadge, wearBadge } from '../badgeProfile'
+import { notify } from '../store'
 import { api, demoMode } from '../api'
 import { state } from '../store'
 import { localBadges, nextBadge } from '../badges'
+const wearing = ref(false)
+async function wear() {
+  if (wearing.value || !selected.value?.earned_at) return
+  wearing.value = true
+  const badge = selected.value
+  try {
+    const remove = featuredBadge.value?.id === badge.id
+    await wearBadge(remove ? null : badge.id)
+    notify(remove ? '已取消佩戴' : '已佩戴 ' + badge.title)
+  } catch (e) {
+    notify(e.message)
+  } finally {
+    wearing.value = false
+  }
+}
 const remote = ref(null),
   loading = ref(false),
   error = ref(''),
@@ -113,6 +131,7 @@ const link = (b) =>
         </div>
       </div>
     </section>
+    <WeeklyGoals :goals="data.weekly_goals" />
     <div class="badge-filters">
       <div class="filter-chips">
         <button
@@ -140,7 +159,10 @@ const link = (b) =>
         @click="selected = badge"
       >
         <span class="badge-card-category"
-          >{{ badge.category }} · {{ badge.earned_at ? '已获得' : '积累中' }}</span
+          >{{ badge.category }} ·
+          {{
+            featuredBadge?.id === badge.id ? '正在佩戴' : badge.earned_at ? '已获得' : '积累中'
+          }}</span
         ><BadgeMark :badge="badge" :locked="!badge.earned_at" />
         <h3>{{ badge.title }}</h3>
         <p>{{ badge.description }}</p>
@@ -195,6 +217,10 @@ const link = (b) =>
           ? '已获得，值得为自己鼓掌'
           : `当前进度 ${Math.min(selected.current, selected.target)} / ${selected.target} ${units[selected.metric]}`
       }}</strong
+      ><button v-if="selected.earned_at" class="btn primary" :disabled="wearing" @click="wear">
+        {{
+          wearing ? '正在保存…' : featuredBadge?.id === selected.id ? '取消佩戴' : '佩戴这枚徽章'
+        }}</button
       ><RouterLink :to="link(selected)" class="btn primary" @click="selected = null"
         >{{ selected.metric === 'protein_days' ? '记录饮食' : '查看训练'
         }}<Icon name="arrow" :size="15"

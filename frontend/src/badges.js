@@ -74,6 +74,7 @@ export function localBadges(data, awards) {
   const stats = badgeMetrics(data)
   return {
     stats,
+    weekly_goals: weeklyGoals(data),
     items: catalog.map((b) => ({
       ...b,
       current: stats[b.metric],
@@ -90,4 +91,58 @@ export function nextBadge(items) {
         Math.min(1, b.current / b.target) - Math.min(1, a.current / a.target) ||
         a.target - b.target,
     )[0]
+}
+
+export function weeklyGoals(data, today = ymd(new Date())) {
+  const day = new Date(today + 'T12:00:00')
+  day.setDate(day.getDate() - ((day.getDay() + 6) % 7))
+  const week = ymd(day)
+  const current = {
+    done: { [week]: data.done?.[week] || {} },
+    protein: { [week]: data.protein?.[week] || {} },
+    logs: Object.fromEntries(
+      Object.entries(data.logs || {}).filter(([key]) => key.startsWith(week + '|')),
+    ),
+  }
+  const stats = badgeMetrics(current, today)
+  const recovery = [2, 4, 6, 7].filter((n) => {
+    const d = new Date(week + 'T12:00:00')
+    d.setDate(d.getDate() + n - 1)
+    return ymd(d) <= today && current.done[week][n] === true
+  }).length
+  return {
+    week,
+    items: [
+      {
+        id: 'strength',
+        title: '规律力量训练',
+        description: '本周完成 2 个力量日，按计划循序渐进。',
+        current: stats.strength_days,
+        target: 2,
+        unit: '天',
+        icon: 'training',
+        action: '/training',
+      },
+      {
+        id: 'recovery',
+        title: '给身体恢复时间',
+        description: '本周完成 1 个恢复日，散步或拉伸也算。',
+        current: recovery,
+        target: 1,
+        unit: '天',
+        icon: 'leaf',
+        action: '/training?view=week',
+      },
+      {
+        id: 'reflection',
+        title: '听听身体怎么说',
+        description: '本周至少一天为训练写下心得。',
+        current: stats.journal_days,
+        target: 1,
+        unit: '天',
+        icon: 'edit',
+        action: '/training?view=history',
+      },
+    ],
+  }
 }
