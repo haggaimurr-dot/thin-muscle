@@ -1,6 +1,7 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue'
 import Icon from '../components/Icon.vue'
+import BadgeSummary from '../components/BadgeSummary.vue'
 import {
   state,
   today,
@@ -121,6 +122,7 @@ const metrics = computed(() => [
       <p>{{ m.note }}</p>
     </article>
   </div>
+  <BadgeSummary />
   <div class="dashboard-grid">
     <section class="panel progress-panel">
       <div class="section-heading">

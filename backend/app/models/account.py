@@ -67,3 +67,10 @@ class TrainingPhoto(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     content: Mapped[bytes] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class BadgeAward(Base):
+    __tablename__ = "badge_awards"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    badge_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    earned_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

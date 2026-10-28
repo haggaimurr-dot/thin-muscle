@@ -7,6 +7,7 @@ import { auth, initAuth, signOut } from './auth'
 import { demoMode } from './api'
 import { reloadCloud } from './store'
 import Modal from './components/Modal.vue'
+import BadgeMark from './components/BadgeMark.vue'
 import { state, exportData, parseBackup, restoreBackup, notify } from './store'
 onMounted(initAuth)
 const cloudConfirm = ref(false)
@@ -36,6 +37,7 @@ const nav = [
   ['/community', 'community', '训练社区'],
   ['/market', 'market', '健身市场'],
   ['/tools', 'tools', '动作实验室'],
+  ['/badges', 'trophy', '成长徽章'],
 ]
 const date = computed(() =>
   new Intl.DateTimeFormat('zh-CN', { month: 'long', day: 'numeric', weekday: 'long' }).format(
@@ -175,6 +177,26 @@ function confirmRestore() {
               重新加载云端
             </button>
           </div>
+          <section
+            v-if="state.badgeNotice.length"
+            class="badge-celebration"
+            aria-live="polite"
+            aria-label="新获得的徽章"
+          >
+            <div class="row">
+              <BadgeMark :badge="state.badgeNotice[0]" small />
+              <div>
+                <h3>新的徽章，属于你的坚持</h3>
+                <p>{{ state.badgeNotice.map((b) => b.title).join(' · ') }}</p>
+              </div>
+              <button class="icon-btn" aria-label="收下徽章鼓励" @click="state.badgeNotice = []">
+                <Icon name="close" :size="17" />
+              </button>
+            </div>
+            <RouterLink to="/badges" class="text-link" @click="state.badgeNotice = []"
+              >查看我的徽章<Icon name="arrow" :size="14"
+            /></RouterLink>
+          </section>
           <RouterView v-if="state.syncStatus !== 'loading'" />
         </template>
       </main>

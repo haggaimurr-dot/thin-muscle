@@ -2,6 +2,7 @@ import { createApp } from 'vue'
 import { createRouter, createWebHashHistory } from 'vue-router'
 import App from './App.vue'
 import Dashboard from './views/Dashboard.vue'
+import Badges from './views/Badges.vue'
 import Training from './views/Training.vue'
 import Nutrition from './views/Nutrition.vue'
 import Community from './views/Community.vue'
@@ -11,6 +12,7 @@ import './style.css'
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [
+    { path: '/badges', component: Badges, meta: { title: '成长徽章', subtitle: 'ACHIEVEMENTS' } },
     { path: '/', component: Dashboard, meta: { title: '训练总览', subtitle: 'OVERVIEW' } },
     {
       path: '/training',

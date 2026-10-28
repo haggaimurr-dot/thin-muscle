@@ -124,8 +124,11 @@ def save_data(
             TrainingPhoto.user_id == user.id, TrainingPhoto.id.in_(removed)
         ).delete(synchronize_session=False)
     update_stats(user.id, body.data, db)
+    from app.services.badges import grant
+
+    new_badges = grant(user.id, body.data, db)
     db.commit()
-    return {"revision": body.revision + 1}
+    return {"revision": body.revision + 1, "new_badges": new_badges}
 
 
 def update_stats(user_id, data, db):

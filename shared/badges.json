@@ -1,0 +1,20 @@
+[
+ {"id":"strength-1","title":"迈出第一步","description":"完成第一个力量训练日。","category":"训练","metric":"strength_days","target":1,"icon":"training","tier":"bronze"},
+ {"id":"strength-5","title":"找到节奏","description":"累计完成 5 个力量训练日。","category":"训练","metric":"strength_days","target":5,"icon":"training","tier":"bronze"},
+ {"id":"strength-15","title":"稳步向前","description":"累计完成 15 个力量训练日。","category":"训练","metric":"strength_days","target":15,"icon":"training","tier":"silver"},
+ {"id":"strength-30","title":"习惯正在成形","description":"累计完成 30 个力量训练日。","category":"训练","metric":"strength_days","target":30,"icon":"training","tier":"silver"},
+ {"id":"strength-60","title":"长期主义者","description":"累计完成 60 个力量训练日。","category":"训练","metric":"strength_days","target":60,"icon":"training","tier":"gold"},
+ {"id":"strength-100","title":"百日积累","description":"累计完成 100 个力量训练日，无需连续。","category":"训练","metric":"strength_days","target":100,"icon":"trophy","tier":"gold"},
+ {"id":"weeks-1","title":"认真过好一周","description":"一个自然周内完成至少 2 个力量日。","category":"坚持","metric":"valid_weeks","target":1,"icon":"calendar","tier":"bronze"},
+ {"id":"streak-2","title":"坚持的开端","description":"连续 2 个自然周，每周完成至少 2 个力量日。","category":"坚持","metric":"longest_streak","target":2,"icon":"flame","tier":"bronze"},
+ {"id":"streak-4","title":"一个月的坚持","description":"连续 4 个自然周，每周完成至少 2 个力量日。","category":"坚持","metric":"longest_streak","target":4,"icon":"flame","tier":"silver"},
+ {"id":"streak-8","title":"把坚持变日常","description":"连续 8 个自然周，每周完成至少 2 个力量日。","category":"坚持","metric":"longest_streak","target":8,"icon":"flame","tier":"gold"},
+ {"id":"weeks-12","title":"积少成多","description":"累计 12 个有效训练周，无需连续。","category":"坚持","metric":"valid_weeks","target":12,"icon":"calendar","tier":"gold"},
+ {"id":"protein-1","title":"给恢复加点料","description":"一天蛋白摄入达到 150g；同一天只计一次。","category":"饮食","metric":"protein_days","target":1,"icon":"nutrition","tier":"bronze"},
+ {"id":"protein-7","title":"吃练有序","description":"累计 7 天蛋白摄入达到 150g，无需连续。","category":"饮食","metric":"protein_days","target":7,"icon":"nutrition","tier":"silver"},
+ {"id":"protein-30","title":"认真照顾自己","description":"累计 30 天蛋白摄入达到 150g，无需连续。","category":"饮食","metric":"protein_days","target":30,"icon":"nutrition","tier":"gold"},
+ {"id":"journal-1","title":"倾听身体","description":"为一天的训练留下心得。","category":"复盘","metric":"journal_days","target":1,"icon":"edit","tier":"bronze"},
+ {"id":"journal-10","title":"与自己对话","description":"在 10 个不同日期留下训练心得；一天多条只计一次。","category":"复盘","metric":"journal_days","target":10,"icon":"edit","tier":"silver"},
+ {"id":"balance-1","title":"懂练也懂休息","description":"同一周完成至少 2 个力量日和 1 个恢复日。","category":"恢复","metric":"balanced_weeks","target":1,"icon":"leaf","tier":"bronze"},
+ {"id":"balance-4","title":"张弛有度","description":"累计 4 周兼顾至少 2 个力量日和 1 个恢复日。","category":"恢复","metric":"balanced_weeks","target":4,"icon":"leaf","tier":"gold"}
+]

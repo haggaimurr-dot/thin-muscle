@@ -1,7 +1,18 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import health, home, market, auth, sync, food, identity, payments, photos
+from app.api import (
+    health,
+    home,
+    market,
+    auth,
+    sync,
+    food,
+    identity,
+    payments,
+    photos,
+    badges,
+)
 from app.core.config import settings
 from app.core.db import Base, SessionLocal, engine
 from app.models import account, entities, home as home_models  # noqa: F401
@@ -15,6 +26,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(badges.router, prefix="/api/v1")
 app.include_router(photos.router, prefix="/api/v1")
 app.include_router(payments.router, prefix="/api/v1")
 app.include_router(identity.router, prefix="/api/v1")

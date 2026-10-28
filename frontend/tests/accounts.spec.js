@@ -79,3 +79,37 @@ test('training photos and notes sync between devices and remain private', async 
   await expect.poll(() => imageElement.evaluate((img) => img.naturalWidth)).toBeGreaterThan(0)
   await context.close()
 })
+
+test('earned badges persist on the account and appear on another device', async ({
+  page,
+  browser,
+}) => {
+  await page.goto('/#/training')
+  await page.getByRole('button', { name: '没有账号？创建账号' }).click()
+  await page.getByLabel('用户名', { exact: true }).fill('badge_browser')
+  await page.getByLabel('密码', { exact: true }).fill('badge-browser-password')
+  await page.getByRole('button', { name: '注册并登录', exact: true }).click()
+  await page.locator('.week-picker button').first().click()
+  await page
+    .locator('.exercise-row')
+    .first()
+    .getByRole('button', { name: '记录', exact: true })
+    .click()
+  await page.getByRole('dialog').getByLabel('次数 / 时长').fill('6')
+  await page.getByRole('dialog').getByLabel('训练心得').fill('保持稳定节奏')
+  await page.getByRole('button', { name: '保存记录', exact: true }).click()
+  await expect(page.locator('.badge-celebration')).toContainText('倾听身体')
+  await page.goto('/#/badges')
+  await expect(page.locator('.badge-card.earned')).toContainText('倾听身体')
+  await page.reload()
+  await expect(page.locator('.badge-card.earned')).toContainText('倾听身体')
+  await expect(page.locator('.badge-celebration')).toHaveCount(0)
+  const context = await browser.newContext({ baseURL: 'http://127.0.0.1:5174' })
+  const other = await context.newPage()
+  await other.goto('/#/badges')
+  await other.getByLabel('用户名', { exact: true }).fill('badge_browser')
+  await other.getByLabel('密码', { exact: true }).fill('badge-browser-password')
+  await other.getByRole('button', { name: '登录', exact: true }).click()
+  await expect(other.locator('.badge-card.earned')).toContainText('倾听身体')
+  await context.close()
+})

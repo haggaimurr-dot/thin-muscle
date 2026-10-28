@@ -1,6 +1,7 @@
 import { reactive, computed, watch } from 'vue'
 import { PLAN } from './data'
-import { api } from './api'
+import { api, demoMode } from './api'
+import { catalog, badgeMetrics } from './badges'
 export function read(key, fallback) {
   try {
     const v = JSON.parse(localStorage.getItem(key))
@@ -32,6 +33,8 @@ export const state = reactive({
   plans: read('tm_vue_plans', {}),
   toast: '',
   storageError: false,
+  badgeNotice: [],
+  demoBadgeAwards: read('tm_demo_badges', {}),
   syncStatus: 'offline',
   syncError: '',
 })
@@ -345,6 +348,7 @@ export async function flushSync() {
     const result = await api('/data', { revision, data: snapshot() }, 'PUT')
     if (epoch !== syncEpoch) return
     revision = result.revision
+    if (result.new_badges?.length) state.badgeNotice.push(...result.new_badges)
     const dirty = changed !== version
     saveCache(dirty)
     state.syncStatus = dirty ? 'pending' : 'synced'
@@ -384,6 +388,7 @@ export function disconnectSync() {
   clearTimeout(syncTimer)
   syncEpoch++
   syncUser = null
+  state.badgeNotice = []
   state.syncStatus = 'offline'
   state.syncError = ''
   applyData({
@@ -409,3 +414,23 @@ export function previousLog(name, key, id) {
     id && index >= 0 ? entries.slice(0, index) : entries.filter((entry) => entry.key <= key)
   ).findLast((entry) => entry.name === name)
 }
+
+if (demoMode)
+  watch(
+    () => badgeMetrics(state),
+    (stats) => {
+      const fresh = catalog.filter(
+        (b) => !state.demoBadgeAwards[b.id] && stats[b.metric] >= b.target,
+      )
+      if (!fresh.length) return
+      const now = new Date().toISOString()
+      for (const badge of fresh) state.demoBadgeAwards[badge.id] = now
+      try {
+        localStorage.setItem('tm_demo_badges', JSON.stringify(state.demoBadgeAwards))
+      } catch {
+        state.storageError = true
+      }
+      state.badgeNotice.push(...fresh)
+    },
+    { immediate: true },
+  )

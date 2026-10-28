@@ -398,3 +398,40 @@ test('previous exercise excludes future logs and phase sets agree across trainin
     '4 ×',
   )
 })
+
+test('badge gallery rewards reflection once per date and keeps earned badges after correcting records', async ({
+  page,
+}) => {
+  await page.goto('/#/badges')
+  await expect(page.locator('.badge-grid .badge-card')).toHaveCount(18)
+  await page.locator('.filter-chips').getByRole('button', { name: '复盘', exact: true }).click()
+  await expect(page.locator('.badge-card')).toHaveCount(2)
+  await page.goto('/#/training')
+  await page
+    .locator('.exercise-row')
+    .first()
+    .getByRole('button', { name: '记录', exact: true })
+    .click()
+  await page.getByRole('dialog').getByLabel('次数 / 时长').fill('6')
+  await page.getByRole('dialog').getByLabel('训练心得').fill('今天把每个动作做标准')
+  await page.getByRole('button', { name: '保存记录', exact: true }).click()
+  await expect(page.locator('.badge-celebration')).toContainText('倾听身体')
+  await page.getByRole('button', { name: '收下徽章鼓励' }).click()
+  await page.goto('/#/badges')
+  await page.getByLabel('徽章获得状态').selectOption('已获得')
+  await expect(page.locator('.badge-card')).toHaveCount(1)
+  await expect(page.locator('.badge-card')).toContainText('倾听身体')
+  await page.reload()
+  await expect(page.locator('.badge-celebration')).toHaveCount(0)
+  await page.goto('/#/training?view=history')
+  await page.getByRole('button', { name: '删除记录', exact: true }).click()
+  await page.getByRole('button', { name: '确认删除', exact: true }).click()
+  await page.goto('/#/badges')
+  await page.getByLabel('徽章获得状态').selectOption('已获得')
+  await expect(page.locator('.badge-card')).toContainText('倾听身体')
+  for (const width of [1440, 768, 390, 320]) {
+    await page.setViewportSize({ width, height: 900 })
+    await expect(page.locator('.badge-card')).toBeVisible()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth)).toBe(false)
+  }
+})
