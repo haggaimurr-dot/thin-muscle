@@ -260,3 +260,32 @@ test('editing a previous week keeps its original week and IDs work without secur
   await page.getByRole('button', { name: '训练记录', exact: true }).click()
   await expect(page.locator('.history-row')).toHaveCount(2)
 })
+
+test('backup export restores records on another browser and rejects malformed files', async ({
+  page,
+  browser,
+}) => {
+  await page.goto('/#/nutrition')
+  await page.getByRole('button', { name: '+25g', exact: true }).click()
+  const downloadPromise = page.waitForEvent('download')
+  await page.getByRole('button', { name: '导出我的记录' }).click()
+  const download = await downloadPromise
+  const path = await download.path()
+  const context = await browser.newContext({ baseURL: 'http://127.0.0.1:5174' })
+  const other = await context.newPage()
+  await other.goto('/#/nutrition')
+  await other.getByLabel('选择备份文件').setInputFiles(path)
+  await expect(other.getByRole('dialog')).toContainText('替换')
+  await other.getByRole('button', { name: '确认替换并导入' }).click()
+  await expect(other.locator('.protein-ring strong')).toHaveText('25')
+  await other.reload()
+  await expect(other.locator('.protein-ring strong')).toHaveText('25')
+  await other.getByLabel('选择备份文件').setInputFiles({
+    name: 'bad.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from('{"tm_phase": 100}'),
+  })
+  await expect(other.getByRole('status')).toContainText('训练阶段无效')
+  await expect(other.locator('.protein-ring strong')).toHaveText('25')
+  await context.close()
+})

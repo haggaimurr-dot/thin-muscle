@@ -167,3 +167,49 @@ export function exportData() {
   URL.revokeObjectURL(url)
   notify('记录已导出')
 }
+
+// A backup is restored only after the user reviews the replacement warning.
+export function parseBackup(text) {
+  let data
+  try {
+    data = JSON.parse(text)
+  } catch {
+    throw new Error('文件不是有效的 JSON 备份')
+  }
+  if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('备份格式无效')
+  for (const [field, key] of Object.entries(keys)) {
+    if (!Object.hasOwn(data, key)) throw new Error('备份不完整，缺少 ' + key)
+    const value = data[key]
+    if (field === 'phase') {
+      if (!Number.isInteger(value) || value < 1 || value > 4) throw new Error('训练阶段无效')
+    } else if (['meals', 'ai'].includes(field)) {
+      if (
+        !Array.isArray(value) ||
+        value.some((item) => !item || typeof item !== 'object' || Array.isArray(item))
+      )
+        throw new Error('备份中的列表格式无效：' + key)
+    } else if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      throw new Error('备份中的记录格式无效：' + key)
+    }
+  }
+  for (const entries of Object.values(data.tm_logs_v2)) {
+    if (
+      !Array.isArray(entries) ||
+      entries.some((entry) => !entry || typeof entry !== 'object' || typeof entry.name !== 'string')
+    )
+      throw new Error('训练记录格式无效')
+  }
+  return data
+}
+export function restoreBackup(data) {
+  // Check storage capacity before updating any reactive values.
+  const probe = '__thin_muscle_restore_probe__'
+  try {
+    localStorage.setItem(probe, JSON.stringify(data))
+    localStorage.removeItem(probe)
+  } catch {
+    throw new Error('浏览器存储空间不足，请先释放空间')
+  }
+  for (const [field, key] of Object.entries(keys)) state[field] = data[key]
+  notify('备份已导入')
+}

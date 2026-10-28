@@ -3302,3 +3302,7 @@ input[type='checkbox'] {
   margin-top: 18px;
   background: #152b20;
 }
+/* Keep backup controls reachable on shorter desktop screens. */
+.sidebar {
+  overflow-y: auto;
+}

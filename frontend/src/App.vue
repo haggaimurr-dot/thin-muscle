@@ -2,9 +2,12 @@
 import { computed, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import Icon from './components/Icon.vue'
-import { state, exportData } from './store'
+import Modal from './components/Modal.vue'
+import { state, exportData, parseBackup, restoreBackup, notify } from './store'
 const route = useRoute(),
-  menuOpen = ref(false)
+  menuOpen = ref(false),
+  backup = ref(null),
+  backupInput = ref(null)
 const nav = [
   ['/', 'dashboard', '训练总览'],
   ['/training', 'training', '我的训练'],
@@ -18,6 +21,28 @@ const date = computed(() =>
     new Date(),
   ),
 )
+async function selectBackup(event) {
+  const file = event.target.files?.[0]
+  event.target.value = ''
+  if (!file) return
+  if (file.size > 5 * 1024 * 1024) {
+    notify('备份文件不能超过 5MB')
+    return
+  }
+  try {
+    backup.value = parseBackup(await file.text())
+  } catch (error) {
+    notify(error.message)
+  }
+}
+function confirmRestore() {
+  try {
+    restoreBackup(backup.value)
+    backup.value = null
+  } catch (error) {
+    notify(error.message)
+  }
+}
 </script>
 <template>
   <div class="app-shell">
@@ -49,6 +74,17 @@ const date = computed(() =>
           <span>专注过程，进步自会发生。</span>
         </div>
         <button class="nav-link" @click="exportData"><Icon name="download" />导出我的记录</button>
+        <button class="nav-link" @click="backupInput.click()">
+          <Icon name="upload" />导入我的记录
+        </button>
+        <input
+          ref="backupInput"
+          class="sr-only"
+          type="file"
+          accept="application/json,.json"
+          aria-label="选择备份文件"
+          @change="selectBackup"
+        />
         <div class="profile">
           <span class="avatar">我</span>
           <div><strong>我的训练空间</strong><small>开发体验账号 · #4</small></div>
@@ -104,6 +140,13 @@ const date = computed(() =>
         }}</span></RouterLink
       >
     </nav>
+    <Modal v-if="backup" title="导入记录备份" @close="backup = null">
+      <p>导入会替换这个浏览器中已有的训练、饮食、计划和评估记录。建议先导出当前记录作为备份。</p>
+      <div class="modal-actions">
+        <button class="btn" @click="backup = null">取消</button
+        ><button class="btn primary" @click="confirmRestore">确认替换并导入</button>
+      </div>
+    </Modal>
     <Transition name="toast"
       ><div v-if="state.toast" class="toast" role="status">
         <Icon name="success" :size="18" />{{ state.toast }}
