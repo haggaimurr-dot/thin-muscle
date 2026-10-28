@@ -1,6 +1,7 @@
 <script setup>
 import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import Icon from '../components/Icon.vue'
+import Modal from '../components/Modal.vue'
 import { api, demoMode } from '../api'
 import { state, proteinToday, changeProtein, notify, uid, week, today, ymd, monday } from '../store'
 import { MEAL_MOCK_FOOD, MEAL_MOCK_LABEL } from '../data'
@@ -20,9 +21,7 @@ const amount = ref(25),
   result = ref(null),
   busy = ref(false),
   timer = ref(null)
-const todayMeals = computed(() =>
-  state.meals.filter((m) => (m.date || m.created_at?.slice(0, 10)) === ymd()),
-)
+const todayMeals = computed(() => state.meals.filter((m) => mealDate(m) === ymd()))
 const kcal = computed(() =>
   Math.round(
     todayMeals.value
@@ -93,15 +92,21 @@ async function identify() {
 function scaled(key) {
   return Math.round(result.value[key] * result.value.portion * 10) / 10
 }
+function mealDate(meal) {
+  return meal.date || ymd(new Date(meal.created_at))
+}
 function addMeal() {
   if (result.value.logged_to_protein) return
   const grams = scaled('base_protein_g')
-  changeProtein(grams)
+  const recordedDate = new Date(mealDate(result.value) + 'T12:00:00')
+  const recordedWeek = monday(recordedDate),
+    recordedDay = recordedDate.getDay() || 7
+  changeProtein(grams, recordedDay, recordedWeek)
   result.value.logged_to_protein = true
   result.value.logged_grams = grams
-  result.value.week = week
-  result.value.day = today
-  notify('已记入今日蛋白')
+  result.value.week = recordedWeek
+  result.value.day = recordedDay
+  notify('已记入 ' + mealDate(result.value) + ' 的蛋白')
 }
 function undo(m) {
   changeProtein(
@@ -111,6 +116,70 @@ function undo(m) {
   )
   m.logged_to_protein = false
   notify('已撤销这份饮食记录')
+}
+const manualOpen = ref(false)
+const manual = ref({
+  title: '',
+  date: ymd(),
+  protein: 0,
+  kcal: 0,
+  carb: 0,
+  fat: 0,
+  portion: 1,
+  note: '',
+})
+function saveManualMeal() {
+  const date = new Date(manual.value.date + 'T12:00:00')
+  if (
+    !manual.value.title.trim() ||
+    Number.isNaN(date.getTime()) ||
+    ymd(date) !== manual.value.date ||
+    manual.value.date > ymd()
+  ) {
+    notify('请填写饮食名称及有效的已发生日期')
+    return
+  }
+  const m = manual.value
+  if (
+    [m.protein, m.kcal, m.carb, m.fat, m.portion].some(
+      (v) => !Number.isFinite(Number(v)) || Number(v) < 0,
+    ) ||
+    Number(m.portion) <= 0
+  ) {
+    notify('请填写有效的营养数值和份量')
+    return
+  }
+  state.meals.unshift({
+    meal_id: uid(),
+    title: m.title.trim(),
+    date: m.date,
+    created_at: new Date().toISOString(),
+    week: monday(date),
+    day: date.getDay() || 7,
+    source: 'manual',
+    status: 'done',
+    base_kcal: Number(m.kcal),
+    base_protein_g: Number(m.protein),
+    base_carb_g: Number(m.carb),
+    base_fat_g: Number(m.fat),
+    portion: Number(m.portion),
+    advice: m.note,
+    sugar_warn: false,
+    logged_to_protein: false,
+  })
+  result.value = state.meals[0]
+  addMeal()
+  manualOpen.value = false
+  manual.value = {
+    title: '',
+    date: ymd(),
+    protein: 0,
+    kcal: 0,
+    carb: 0,
+    fat: 0,
+    portion: 1,
+    note: '',
+  }
 }
 function setMode(m) {
   mode.value = m
@@ -194,7 +263,7 @@ onBeforeUnmount(() => {
       <div class="nutrition-note">
         <Icon name="flame" />
         <div>
-          <strong>{{ kcal }} kcal</strong><span>今日已记入的饮食演示热量</span>
+          <strong>{{ kcal }} kcal</strong><span>今日饮食热量</span>
         </div>
       </div>
     </section>
@@ -252,7 +321,13 @@ onBeforeUnmount(() => {
       <div v-if="result" class="meal-result">
         <div class="section-heading">
           <h3>{{ result.title }}</h3>
-          <span class="pill">{{ result.is_estimate ? 'AI 估算结果' : '演示结果' }}</span>
+          <span class="pill">{{
+            result.source === 'manual'
+              ? '手动记录'
+              : result.is_estimate
+                ? 'AI 估算结果'
+                : '演示结果'
+          }}</span>
         </div>
         <label class="row between"
           >份量<select v-model.number="result.portion" :disabled="result.logged_to_protein">
@@ -279,7 +354,13 @@ onBeforeUnmount(() => {
         <p>{{ result.advice }}</p>
         <p v-if="result.sugar_warn" class="alert">配料包含添加糖，请留意摄入。</p>
         <button class="btn primary full" :disabled="result.logged_to_protein" @click="addMeal">
-          {{ result.logged_to_protein ? '已记入蛋白' : '记入今日蛋白' }}
+          {{
+            result.logged_to_protein
+              ? '已记入蛋白'
+              : mealDate(result) === ymd()
+                ? '记入今日蛋白'
+                : '记入 ' + mealDate(result) + ' 的蛋白'
+          }}
         </button>
       </div>
     </section>
@@ -287,14 +368,21 @@ onBeforeUnmount(() => {
   <section class="panel">
     <div class="section-heading">
       <h2>饮食记录</h2>
-      <span class="pill">{{ state.meals.length }} 份分析</span>
+      <div class="row">
+        <span class="pill">{{ state.meals.length }} 条记录</span
+        ><button class="btn primary" @click="manualOpen = true">
+          <Icon name="plus" :size="16" />手动记录饮食
+        </button>
+      </div>
     </div>
-    <p v-if="!state.meals.length" class="empty-state">拍下今天的一餐，从了解自己吃了什么开始。</p>
+    <p v-if="!state.meals.length" class="empty-state">
+      手动记下今天的一餐，从了解自己吃了什么开始。
+    </p>
     <div v-for="m in state.meals" :key="m.meal_id" class="history-row">
       <div>
         <strong>{{ m.title }}</strong>
         <p>
-          {{ m.date || m.created_at?.slice(0, 10) }} · {{ m.portion }} 份 · 蛋白
+          {{ mealDate(m) }} · {{ m.portion }} 份 · 蛋白
           {{ Math.round(m.base_protein_g * m.portion) }}g ·
           {{ m.logged_to_protein ? '已记入' : '未记入' }}
         </p>
@@ -305,4 +393,60 @@ onBeforeUnmount(() => {
       </div>
     </div>
   </section>
+  <Modal v-if="manualOpen" title="手动记录饮食" @close="manualOpen = false"
+    ><form class="form-stack" @submit.prevent="saveManualMeal">
+      <label
+        >饮食名称<input
+          v-model="manual.title"
+          required
+          maxlength="128"
+          placeholder="例如 鸡胸饭" /></label
+      ><label>饮食日期<input v-model="manual.date" type="date" :max="ymd()" required /></label>
+      <div class="two-col">
+        <label
+          >每份热量（kcal）<input
+            v-model.number="manual.kcal"
+            type="number"
+            min="0"
+            max="10000"
+            step="0.1"
+            required /></label
+        ><label
+          >每份蛋白质（g）<input
+            v-model.number="manual.protein"
+            type="number"
+            min="0"
+            max="1000"
+            step="0.1"
+            required /></label
+        ><label
+          >每份碳水（g）<input
+            v-model.number="manual.carb"
+            type="number"
+            min="0"
+            max="2000"
+            step="0.1"
+            required /></label
+        ><label
+          >每份脂肪（g）<input
+            v-model.number="manual.fat"
+            type="number"
+            min="0"
+            max="1000"
+            step="0.1"
+            required
+        /></label>
+      </div>
+      <label
+        >食用份数<input
+          v-model.number="manual.portion"
+          type="number"
+          min="0.1"
+          max="10"
+          step="0.1"
+          required /></label
+      ><label>饮食备注<textarea v-model="manual.note" rows="2" maxlength="500"></textarea></label
+      ><button class="btn primary full" type="submit">保存并计入蛋白</button>
+    </form></Modal
+  >
 </template>

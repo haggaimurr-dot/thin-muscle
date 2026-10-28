@@ -3,6 +3,8 @@ import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
 import Modal from '../components/Modal.vue'
+import { api, demoMode } from '../api'
+import { preparePhoto, photoUrl, maxPhotos } from '../photos'
 import {
   state,
   today,
@@ -13,6 +15,7 @@ import {
   sessionKey,
   saveLog,
   notify,
+  previousLog,
 } from '../store'
 import { PHASES, WEEK_LABEL, VIDEO_LIB } from '../data'
 const route = useRoute(),
@@ -34,19 +37,8 @@ watch(
 )
 const form = ref({}),
   plan = computed(() => getPlan(day.value)),
-  exercises = computed(() =>
-    plan.value[session.value].map((e) => ({
-      ...e,
-      sets:
-        session.value === 'pm' &&
-        state.phase > 1 &&
-        !e.noSets &&
-        !e.timed &&
-        (e.sets === 3 || e.sets === '3–4')
-          ? 4
-          : e.sets,
-    })),
-  )
+  exercises = computed(() => plan.value[session.value])
+
 const history = computed(() =>
   Object.entries(state.logs)
     .filter(([, entries]) => entries.length)
@@ -61,6 +53,8 @@ function openLog(ex, entry = null, key = null) {
     week: key?.split('|')[0] || week,
   }
   form.value = {
+    note: entry?.note || '',
+    photos: [...(entry?.photos || [])],
     name: ex.name,
     weight: entry?.weight || '',
     sets: entry?.sets || String(ex.sets || 3),
@@ -68,15 +62,52 @@ function openLog(ex, entry = null, key = null) {
     rpe: entry?.rpe === '—' ? '' : entry?.rpe || 7,
   }
 }
-function submit() {
-  saveLog(
-    edit.value.day,
-    edit.value.session,
-    { ...form.value, weight: form.value.weight || '自重', rpe: form.value.rpe || '—' },
-    edit.value.id,
-    edit.value.week,
-  )
-  edit.value = null
+const saving = ref(false),
+  preparing = ref(false),
+  photoPreview = ref('')
+async function addPhotos(event) {
+  const files = [...event.target.files]
+  event.target.value = ''
+  if (files.length + form.value.photos.length > maxPhotos) {
+    notify('每条运动记录最多三张图片')
+    return
+  }
+  preparing.value = true
+  try {
+    for (const file of files) form.value.photos.push(await preparePhoto(file))
+  } catch (error) {
+    notify(error.message)
+  } finally {
+    preparing.value = false
+  }
+}
+async function submit() {
+  if (saving.value || preparing.value) return
+  saving.value = true
+  try {
+    if (!demoMode)
+      for (let i = 0; i < form.value.photos.length; i++) {
+        if (form.value.photos[i].startsWith('data:')) {
+          const blob = await (await fetch(form.value.photos[i])).blob()
+          const upload = new FormData()
+          upload.append('file', blob, 'training.jpg')
+          const photo = await api('/photos', upload)
+          form.value.photos[i] = photo.id
+        }
+      }
+    saveLog(
+      edit.value.day,
+      edit.value.session,
+      { ...form.value, weight: form.value.weight || '自重', rpe: form.value.rpe || '—' },
+      edit.value.id,
+      edit.value.week,
+    )
+    edit.value = null
+  } catch (error) {
+    notify(error.message)
+  } finally {
+    saving.value = false
+  }
 }
 function complete() {
   for (const ex of exercises.value) toggleCheck(day.value, session.value, ex.name, true)
@@ -130,10 +161,11 @@ function removeLog() {
   notify('记录已删除')
 }
 function previous() {
-  if (!form.value.name) return null
-  return history.value
-    .flatMap(([key, entries]) => entries.map((e) => ({ ...e, key })))
-    .find((e) => e.name === form.value.name && e.id !== edit.value?.id)
+  return previousLog(
+    form.value.name,
+    sessionKey(edit.value?.day, edit.value?.session, edit.value?.week),
+    edit.value?.id,
+  )
 }
 </script>
 <template>
@@ -289,12 +321,29 @@ function previous() {
         · {{ key.endsWith('am') ? '早训' : '晚训' }}
       </h3>
       <div v-for="entry in entries" :key="entry.id" class="history-row">
-        <div>
+        <div class="record-content">
           <strong>{{ entry.name }}</strong>
           <p>
             {{ entry.weight }} kg / 自重 · {{ entry.sets }} 组 × {{ entry.reps }} · RPE
             {{ entry.rpe }}
           </p>
+          <p v-if="entry.note" class="training-note">{{ entry.note }}</p>
+          <div v-if="entry.photos?.length" class="record-photos">
+            <button
+              v-for="(photo, index) in entry.photos"
+              :key="index"
+              class="record-photo"
+              :aria-label="'查看训练图片 ' + (index + 1)"
+              @click="photoPreview = photo"
+            >
+              <img
+                v-if="photoUrl(photo)"
+                :src="photoUrl(photo)"
+                :alt="entry.name + '训练图片 ' + (index + 1)"
+                loading="lazy"
+              />
+            </button>
+          </div>
         </div>
         <div class="row">
           <button class="icon-btn" aria-label="编辑记录" @click="openLog(entry, entry, key)">
@@ -310,7 +359,10 @@ function previous() {
       </div>
     </article>
   </section>
-  <Modal v-if="edit" :title="(edit.id ? '编辑' : '记录') + ' · ' + form.name" @close="edit = null"
+  <Modal
+    v-if="edit"
+    :title="(edit.id ? '编辑' : '记录') + ' · ' + form.name"
+    @close="!saving && !preparing && (edit = null)"
     ><p class="muted">记录实际完成的数据，而不是目标值。</p>
     <div v-if="previous()" class="info-box">
       上次：{{ previous().weight }} · {{ previous().sets }} × {{ previous().reps }} · RPE
@@ -333,8 +385,50 @@ function previous() {
           min="1"
           max="10"
           step="0.5"
-          placeholder="1–10" /></label
-      ><button class="btn primary full" type="submit">保存记录</button>
+          placeholder="1–10"
+      /></label>
+      <label
+        >训练心得<textarea
+          v-model="form.note"
+          rows="4"
+          maxlength="2000"
+          placeholder="今天的状态、动作感受，或下次想改进的地方…"
+        ></textarea
+        ><span class="tiny">{{ form.note.length }} / 2000</span></label
+      >
+      <div>
+        <div class="section-heading">
+          <h3>训练图片</h3>
+          <span class="tiny">{{ form.photos.length }} / 3 张</span>
+        </div>
+        <div class="record-photos">
+          <div v-for="(photo, index) in form.photos" :key="index" class="photo-editor">
+            <img :src="photoUrl(photo)" :alt="'待保存训练图片 ' + (index + 1)" /><button
+              type="button"
+              class="icon-btn"
+              :disabled="saving || preparing"
+              :aria-label="'移除图片 ' + (index + 1)"
+              @click="form.photos.splice(index, 1)"
+            >
+              <Icon name="close" :size="15" />
+            </button>
+          </div>
+        </div>
+        <label v-if="form.photos.length < 3" class="btn photo-picker"
+          ><Icon name="upload" :size="16" />{{ preparing ? '正在压缩图片…' : '添加训练图片'
+          }}<input
+            type="file"
+            accept="image/jpeg,image/png,image/webp"
+            multiple
+            :disabled="preparing || saving"
+            aria-label="添加训练图片"
+            @change="addPhotos"
+        /></label>
+        <p class="tiny">最多三张，每张不超过 8MB，保存前会压缩。支持相册选择或手机拍照。</p>
+      </div>
+      <button class="btn primary full" type="submit" :disabled="saving || preparing">
+        {{ saving ? '正在保存…' : '保存记录' }}
+      </button>
     </form></Modal
   >
   <Modal v-if="video" :title="video + ' · 动作教学'" @close="video = null"
@@ -373,6 +467,9 @@ function previous() {
       ><button class="btn primary" type="submit">保存视频链接</button>
     </form></Modal
   >
+  <Modal v-if="photoPreview" title="训练图片" @close="photoPreview = ''"
+    ><img class="training-photo-preview" :src="photoUrl(photoPreview)" alt="训练记录图片大图"
+  /></Modal>
   <Modal v-if="deleteTarget" title="删除这条训练记录？" @close="deleteTarget = null"
     ><p>删除后无法恢复，其他训练记录会保留。</p>
     <div class="modal-actions">

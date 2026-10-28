@@ -240,3 +240,61 @@ class Integrations(unittest.TestCase):
                     db.query(TrainingNode).filter_by(owner_id=self.user).count(), 1
                 )
         seller.close()
+
+    def test_training_photos_are_private_and_removed_with_record(self):
+        from test_accounts import payload
+
+        image = io.BytesIO()
+        Image.new("RGB", (30, 20), color="green").save(image, format="PNG")
+        uploaded = self.client.post(
+            "/api/v1/photos",
+            headers=self.headers,
+            files={"file": ("photo.png", image.getvalue())},
+        )
+        self.assertEqual(uploaded.status_code, 200, uploaded.text)
+        photo_id = uploaded.json()["id"]
+        self.assertEqual(self.client.get("/api/v1/photos/" + photo_id).status_code, 200)
+        outsider = TestClient(app)
+        r = outsider.post(
+            "/api/v1/auth/register",
+            json={
+                "username": "other_" + str(time.time_ns()),
+                "password": "another-password-123",
+            },
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(outsider.get("/api/v1/photos/" + photo_id).status_code, 404)
+        bad = self.client.post(
+            "/api/v1/photos",
+            headers=self.headers,
+            files={"file": ("fake.png", b"not image")},
+        )
+        self.assertEqual(bad.status_code, 422)
+        data = payload()
+        data["logs"] = {
+            "2026-10-26|1-am": [
+                {
+                    "id": "photo-log",
+                    "name": "pushup",
+                    "note": "steady progress",
+                    "photos": [photo_id],
+                }
+            ]
+        }
+        r = self.client.put(
+            "/api/v1/data", headers=self.headers, json={"revision": 0, "data": data}
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(
+            self.client.get("/api/v1/data").json()["data"]["logs"]["2026-10-26|1-am"][
+                0
+            ]["note"],
+            "steady progress",
+        )
+        data["logs"] = {}
+        r = self.client.put(
+            "/api/v1/data", headers=self.headers, json={"revision": 1, "data": data}
+        )
+        self.assertEqual(r.status_code, 200, r.text)
+        self.assertEqual(self.client.get("/api/v1/photos/" + photo_id).status_code, 404)
+        outsider.close()

@@ -3,7 +3,7 @@ import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import Icon from '../components/Icon.vue'
 import Modal from '../components/Modal.vue'
 import { api, demoMode } from '../api'
-import { state, week, getPlan, notify, sessionKey } from '../store'
+import { state, week, getPlan, notify, sessionKey, recalculateDay } from '../store'
 const tab = ref('browse'),
   kind = ref('all'),
   cycle = ref('all'),
@@ -182,6 +182,7 @@ async function assemble() {
           base.pm = exercises.slice(mid)
         } else base[d.session] = exercises
         state.plans[week][weekday] = base
+        recalculateDay(weekday)
       }
     }
     assembleWeight.value = false

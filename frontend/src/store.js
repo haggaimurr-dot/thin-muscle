@@ -95,7 +95,19 @@ export function notify(message) {
   toastTimer = setTimeout(() => (state.toast = ''), 4000)
 }
 export function getPlan(day) {
-  return state.plans[week]?.[day] || PLAN[day]
+  const custom = state.plans[week]?.[day]
+  if (custom) return custom
+  const plan = PLAN[day]
+  return {
+    ...plan,
+    pm: plan.pm.map((ex) => ({
+      ...ex,
+      sets:
+        state.phase > 1 && !ex.noSets && !ex.timed && (ex.sets === 3 || ex.sets === '3–4')
+          ? 4
+          : ex.sets,
+    })),
+  }
 }
 export function sessionKey(day, session, w = week) {
   return `${w}|${day}-${session}`
@@ -107,10 +119,14 @@ export function toggleCheck(day, session, name, value) {
   state.checks[week] ??= {}
   state.checks[week][`${day}-${session}::${name}`] = value
   state.done[week] ??= {}
+  recalculateDay(day)
+}
+export function recalculateDay(day) {
+  state.done[week] ??= {}
   const plan = getPlan(day)
-  state.done[week][day] = ['am', 'pm'].every((s) =>
-    plan[s].every((ex) => isChecked(day, s, ex.name)),
-  )
+  state.done[week][day] =
+    plan.am.length + plan.pm.length > 0 &&
+    ['am', 'pm'].every((s) => plan[s].every((ex) => isChecked(day, s, ex.name)))
 }
 export const proteinToday = computed(() => Number(state.protein[week]?.[today] || 0))
 export function changeProtein(delta, day = today, w = week) {
@@ -177,7 +193,7 @@ export function saveLog(day, session, entry, editId, w = week) {
   state.logs[key] ??= []
   if (editId) {
     const i = state.logs[key].findIndex((x) => x.id === editId)
-    if (i >= 0) state.logs[key][i] = { ...entry, id: editId }
+    if (i >= 0) state.logs[key][i] = { ...state.logs[key][i], ...entry, id: editId }
   } else
     state.logs[key].push({
       ...entry,
@@ -382,4 +398,14 @@ export function disconnectSync() {
     ai: [],
     plans: {},
   })
+}
+
+export function previousLog(name, key, id) {
+  const entries = Object.entries(state.logs)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .flatMap(([k, list]) => list.map((entry) => ({ ...entry, key: k })))
+  const index = id ? entries.findIndex((entry) => entry.key === key && entry.id === id) : -1
+  return (
+    id && index >= 0 ? entries.slice(0, index) : entries.filter((entry) => entry.key <= key)
+  ).findLast((entry) => entry.name === name)
 }

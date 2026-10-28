@@ -8,7 +8,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from app.api.auth import current_user
 from app.core.db import get_db
-from app.models.account import UserData
+from app.models.account import UserData, TrainingPhoto
 from app.models.entities import User
 from app.models.home import WeekStat
 
@@ -48,6 +48,20 @@ def validate(data):
         for v in data["logs"].values()
     ):
         raise HTTPException(422, "训练记录格式错误")
+    for entries in data["logs"].values():
+        for entry in entries:
+            if (
+                not isinstance(entry.get("note", ""), str)
+                or len(entry.get("note", "")) > 2000
+            ):
+                raise HTTPException(422, "训练心得不能超过 2000 字")
+            photos = entry.get("photos", [])
+            if (
+                not isinstance(photos, list)
+                or len(photos) > 3
+                or any(not isinstance(photo, str) for photo in photos)
+            ):
+                raise HTTPException(422, "每条记录最多三张图片")
     try:
         text = json.dumps(data, ensure_ascii=False, allow_nan=False)
     except (ValueError, TypeError):
@@ -80,6 +94,10 @@ def save_data(
     body: SaveData, user: User = Depends(current_user), db: Session = Depends(get_db)
 ):
     payload = validate(body.data)
+    before = db.get(UserData, user.id)
+    old_payload = json.loads(before.payload) if before else {}
+    if body.revision == 0 and before:
+        raise HTTPException(409, "其他设备已更新记录，请先备份本地记录再重新加载云端")
     if body.revision == 0:
         try:
             db.add(UserData(user_id=user.id, revision=1, payload=payload))
@@ -100,6 +118,11 @@ def save_data(
             raise HTTPException(
                 409, "其他设备已更新记录，请先备份本地记录再重新加载云端"
             )
+    removed = referenced_photos(old_payload) - referenced_photos(body.data)
+    if removed:
+        db.query(TrainingPhoto).filter(
+            TrainingPhoto.user_id == user.id, TrainingPhoto.id.in_(removed)
+        ).delete(synchronize_session=False)
     update_stats(user.id, body.data, db)
     db.commit()
     return {"revision": body.revision + 1}
@@ -161,3 +184,13 @@ def update_stats(user_id, data, db):
                 ),
             )
         )
+
+
+def referenced_photos(data):
+    return {
+        photo
+        for entries in data.get("logs", {}).values()
+        for entry in entries
+        for photo in entry.get("photos", [])
+        if isinstance(photo, str) and re.fullmatch(r"[a-f0-9]{32}", photo)
+    }

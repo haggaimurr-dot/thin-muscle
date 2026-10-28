@@ -289,3 +289,112 @@ test('backup export restores records on another browser and rejects malformed fi
   await expect(other.locator('.protein-ring strong')).toHaveText('25')
   await context.close()
 })
+
+test('training notes and photos persist, can be edited and removed', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  await page.goto('/#/training')
+  await page
+    .locator('.exercise-row')
+    .first()
+    .getByRole('button', { name: '记录', exact: true })
+    .click()
+  let dialog = page.getByRole('dialog')
+  await dialog.getByLabel('次数 / 时长').fill('6')
+  await dialog.getByLabel('训练心得').fill('今天动作更稳，下次保持节奏。')
+  const image = await page.evaluate(() => {
+    const c = document.createElement('canvas')
+    c.width = 20
+    c.height = 20
+    return c.toDataURL('image/png').split(',')[1]
+  })
+  const photo = {
+    name: 'training.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(image, 'base64'),
+  }
+  await dialog.getByLabel('添加训练图片', { exact: true }).setInputFiles([photo, photo, photo])
+  await expect(dialog.locator('.photo-editor')).toHaveCount(3)
+  await dialog.getByRole('button', { name: '移除图片 3', exact: true }).click()
+  await dialog.getByRole('button', { name: '保存记录', exact: true }).click()
+  await page.reload()
+  await page.getByRole('button', { name: '训练记录', exact: true }).click()
+  await expect(page.locator('.training-note')).toHaveText('今天动作更稳，下次保持节奏。')
+  await expect(page.locator('.record-photo')).toHaveCount(2)
+  await page.getByRole('button', { name: '查看训练图片 1', exact: true }).click()
+  await expect(page.getByRole('dialog').locator('img')).toBeVisible()
+  await page.getByRole('button', { name: '关闭', exact: true }).click()
+  await page.getByRole('button', { name: '编辑记录', exact: true }).click()
+  dialog = page.getByRole('dialog')
+  await dialog.getByLabel('训练心得').fill('更新后的心得')
+  await dialog.getByRole('button', { name: '移除图片 2', exact: true }).click()
+  await dialog.getByRole('button', { name: '保存记录', exact: true }).click()
+  await expect(page.locator('.training-note')).toHaveText('更新后的心得')
+  await expect(page.locator('.record-photo')).toHaveCount(1)
+})
+
+test('manual historical meal remains on its original date when undone and counted again', async ({
+  page,
+}) => {
+  await page.goto('/#/nutrition')
+  const previous = await page.evaluate(() => {
+    const d = new Date()
+    d.setDate(d.getDate() - 8)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+  })
+  await page.getByRole('button', { name: '手动记录饮食', exact: true }).click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByLabel('饮食名称', { exact: true }).fill('历史鸡胸饭')
+  await dialog.getByLabel('饮食日期', { exact: true }).fill(previous)
+  await dialog.getByLabel('每份蛋白质').fill('42')
+  await dialog.getByLabel('每份热量').fill('520')
+  await dialog.getByRole('button', { name: '保存并计入蛋白', exact: true }).click()
+  await expect(page.locator('.protein-ring strong')).toHaveText('0')
+  await page.getByRole('button', { name: '撤销计入', exact: true }).click()
+  await page.getByRole('button', { name: '记入 ' + previous + ' 的蛋白', exact: true }).click()
+  await expect(page.locator('.protein-ring strong')).toHaveText('0')
+  await page.reload()
+  await expect(page.locator('.history-row')).toContainText('历史鸡胸饭')
+  await expect(page.locator('.history-row')).toContainText('已记入')
+})
+
+test('previous exercise excludes future logs and phase sets agree across training views', async ({
+  page,
+}) => {
+  await page.goto('/#/training')
+  await page.evaluate(() => {
+    const d = new Date()
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7))
+    const w = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    localStorage.setItem(
+      'tm_logs_v2',
+      JSON.stringify({
+        [w + '|1-am']: [
+          { id: 'old', name: '哑铃卧推', weight: '16', sets: '3', reps: '5', rpe: '7' },
+        ],
+        [w + '|5-am']: [
+          { id: 'future', name: '哑铃卧推', weight: '24', sets: '3', reps: '6', rpe: '8' },
+        ],
+      }),
+    )
+  })
+  await page.reload()
+  await page.getByRole('button', { name: '训练记录', exact: true }).click()
+  await page
+    .locator('.history-row')
+    .filter({ hasText: '16 kg' })
+    .getByRole('button', { name: '编辑记录', exact: true })
+    .click()
+  await expect(page.getByRole('dialog').locator('.info-box')).toHaveCount(0)
+  await page.getByRole('button', { name: '关闭', exact: true }).click()
+  await page.getByRole('button', { name: '今日训练', exact: true }).click()
+  await page.locator('.week-picker button').first().click()
+  await page.getByRole('button', { name: 'W2', exact: true }).click()
+  await page.getByRole('button', { name: '晚训', exact: true }).click()
+  await expect(
+    page.locator('.exercise-row').first().locator('.exercise-target strong'),
+  ).toContainText('4')
+  await page.getByRole('button', { name: '每周计划', exact: true }).click()
+  await expect(page.locator('.exercise-mini').filter({ hasText: '哑铃侧平举' })).toContainText(
+    '4 ×',
+  )
+})
