@@ -1,9 +1,30 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import Icon from './components/Icon.vue'
+import Login from './components/Login.vue'
+import { auth, initAuth, signOut } from './auth'
+import { demoMode } from './api'
+import { reloadCloud } from './store'
 import Modal from './components/Modal.vue'
 import { state, exportData, parseBackup, restoreBackup, notify } from './store'
+onMounted(initAuth)
+const cloudConfirm = ref(false)
+async function logout() {
+  try {
+    await signOut()
+  } catch (error) {
+    notify(error.message)
+  }
+}
+async function loadRemote() {
+  try {
+    await reloadCloud()
+    cloudConfirm.value = false
+  } catch (error) {
+    notify(error.message)
+  }
+}
 const route = useRoute(),
   menuOpen = ref(false),
   backup = ref(null),
@@ -85,9 +106,15 @@ function confirmRestore() {
           aria-label="选择备份文件"
           @change="selectBackup"
         />
+        <button v-if="auth.user" class="nav-link" @click="logout">
+          <Icon name="logout" />退出登录
+        </button>
         <div class="profile">
           <span class="avatar">我</span>
-          <div><strong>我的训练空间</strong><small>开发体验账号 · #4</small></div>
+          <div>
+            <strong>我的训练空间</strong
+            ><small>{{ demoMode ? '演示账号' : auth.user?.nickname || '尚未登录' }}</small>
+          </div>
           <span class="online-dot"></span>
         </div>
       </div>
@@ -118,7 +145,38 @@ function confirmRestore() {
         <div v-if="state.storageError" class="alert">
           浏览器存储已满或不可用，当前修改暂未保存，请先导出记录。
         </div>
-        <RouterView />
+        <p v-if="!auth.ready" class="loading-state">正在检查登录状态…</p>
+        <Login v-else-if="!demoMode && !auth.user" />
+        <template v-else>
+          <div v-if="!demoMode" class="sync-banner" role="status">
+            <span>{{
+              {
+                synced: '已同步到账号',
+                pending: '正在等待同步…',
+                saving: '正在保存到云端…',
+                loading: '正在加载云端记录…',
+                error: '同步失败，本机记录已保留',
+                conflict: '发现多设备版本冲突',
+              }[state.syncStatus]
+            }}</span>
+            <span v-if="state.syncError">{{ state.syncError }}</span>
+            <button
+              v-if="['error', 'conflict'].includes(state.syncStatus)"
+              class="text-link"
+              @click="exportData"
+            >
+              先导出本机备份
+            </button>
+            <button
+              v-if="['error', 'conflict'].includes(state.syncStatus)"
+              class="text-link"
+              @click="cloudConfirm = true"
+            >
+              重新加载云端
+            </button>
+          </div>
+          <RouterView v-if="state.syncStatus !== 'loading'" />
+        </template>
       </main>
       <footer class="page-footer">
         <span>薄肌 THIN MUSCLE</span><span>比昨天，进步一点点。</span>
@@ -147,6 +205,13 @@ function confirmRestore() {
         ><button class="btn primary" @click="confirmRestore">确认替换并导入</button>
       </div>
     </Modal>
+    <Modal v-if="cloudConfirm" title="重新加载云端记录？" @close="cloudConfirm = false"
+      ><p>这会替换当前本机界面中的记录。请先导出本机备份，保留尚未同步的修改。</p>
+      <div class="modal-actions">
+        <button class="btn" @click="cloudConfirm = false">取消</button
+        ><button class="btn primary" @click="loadRemote">确认加载云端</button>
+      </div></Modal
+    >
     <Transition name="toast"
       ><div v-if="state.toast" class="toast" role="status">
         <Icon name="success" :size="18" />{{ state.toast }}

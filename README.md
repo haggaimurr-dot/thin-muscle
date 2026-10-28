@@ -12,10 +12,10 @@ cd backend
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+COOKIE_SECURE=false PUBLIC_ORIGIN=http://127.0.0.1:5173 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-接口文档：http://127.0.0.1:8000/docs 。默认 SQLite 数据库会在启动时创建，本地数据库与上传内容不纳入版本管理。
+接口文档：http://127.0.0.1:8000/docs 。本机开发命令中的 HTTP 设置只用于本机；正式环境请使用 HTTPS。默认 SQLite 数据库会在启动时创建，本地数据库与上传内容不纳入版本管理。
 
 ## 前端启动
 
@@ -32,3 +32,7 @@ npm run dev
 功能范围、数据存储、部署与浏览器测试说明见 [frontend/README.md](frontend/README.md)。AI 评估、饮食识别及支付流程沿用原型演示模式。
 
 各目录保留 `.gitignore`，忽略密钥、本地环境、运行数据及生成文件。
+
+## 账号、安全和部署
+
+当前代码默认启用正式账号认证并关闭开发头鉴权、自动演示数据及假付款。账号记录支持云端持久化与版本冲突检测。首次上线前请按 [统一部署与配置清单](deploy/DEPLOYMENT.md) 设置 HTTPS、会话 Cookie 和可选服务商配置。AI 动作视频解析暂缓；饮食图片、短信、微信和 Stripe 支付适配需真实凭据与联调。

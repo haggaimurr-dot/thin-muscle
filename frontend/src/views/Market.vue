@@ -2,7 +2,7 @@
 import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import Icon from '../components/Icon.vue'
 import Modal from '../components/Modal.vue'
-import { api } from '../api'
+import { api, demoMode } from '../api'
 import { state, week, getPlan, notify, sessionKey } from '../store'
 const tab = ref('browse'),
   kind = ref('all'),
@@ -113,6 +113,14 @@ async function sendComment() {
 async function buy() {
   if (!ackWeight.value || !ackLevel.value) return
   await action(async () => {
+    if (!demoMode) {
+      const payment = await api('/payments/checkout/' + detail.value.listing_id, {
+        ack_weight: true,
+        ack_level: true,
+      })
+      window.location.assign(payment.url)
+      return
+    }
     await api(`/market/listings/${detail.value.listing_id}/replicate`, {
       ack_weight: true,
       ack_level: true,
@@ -566,7 +574,13 @@ async function publishListing() {
       </button></template
     ><template v-else
       ><h3>{{ detail.title }}</h3>
-      <div class="info-box">与现有后端一致，此流程为开发演示，不调用真实支付。</div>
+      <div class="info-box">
+        {{
+          demoMode
+            ? '当前为开发演示，不调用真实支付。'
+            : '将跳转至支付平台。付款后返回并刷新节点库；仅在服务端收到支付确认后开放内容。'
+        }}
+      </div>
       <div class="price-breakdown">
         <div>
           <span>复刻价格</span><strong>¥{{ yuan(detail.price_fen) }}</strong>
@@ -591,7 +605,11 @@ async function publishListing() {
         >
       </div>
       <button class="btn primary full" :disabled="pending || !ackWeight || !ackLevel" @click="buy">
-        {{ pending ? '正在复刻…' : '确认演示复刻 · ¥' + yuan(detail.price_fen) }}
+        {{
+          pending
+            ? '正在复刻…'
+            : (demoMode ? '确认演示复刻 · ¥' : '前往支付 · ¥') + yuan(detail.price_fen)
+        }}
       </button></template
     ></Modal
   >

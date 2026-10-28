@@ -1,8 +1,18 @@
 <script setup>
-import { ref, computed, onBeforeUnmount } from 'vue'
+import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
 import Icon from '../components/Icon.vue'
+import { api, demoMode } from '../api'
 import { state, proteinToday, changeProtein, notify, uid, week, today, ymd, monday } from '../store'
 import { MEAL_MOCK_FOOD, MEAL_MOCK_LABEL } from '../data'
+const consent = ref(false),
+  foodEnabled = ref(false)
+onMounted(async () => {
+  try {
+    foodEnabled.value = (await api('/auth/capabilities')).food_recognition
+  } catch {
+    foodEnabled.value = false
+  }
+})
 const amount = ref(25),
   mode = ref('food'),
   file = ref(null),
@@ -23,8 +33,8 @@ const kcal = computed(() =>
 function pick(e) {
   const f = e.target.files[0]
   if (!f) return
-  if (!f.type.startsWith('image/') || f.size > 10 * 1024 * 1024) {
-    notify('请选择 10MB 以内的图片')
+  if (!f.type.startsWith('image/') || f.size > 8 * 1024 * 1024) {
+    notify('请选择 8MB 以内的图片')
     e.target.value = ''
     return
   }
@@ -33,7 +43,35 @@ function pick(e) {
   preview.value = URL.createObjectURL(f)
   result.value = null
 }
-function identify() {
+async function identify() {
+  if (!demoMode) {
+    if (!file.value || !consent.value || busy.value) return
+    busy.value = true
+    try {
+      const form = new FormData()
+      form.append('file', file.value)
+      form.append('mode', mode.value)
+      form.append('consent', 'true')
+      const response = await api('/ai/food', form)
+      state.meals.unshift({
+        ...response,
+        meal_id: uid(),
+        date: ymd(),
+        week,
+        day: today,
+        created_at: new Date().toISOString(),
+        file_name: file.value.name,
+        logged_to_protein: false,
+      })
+      result.value = state.meals[0]
+      notify('识别完成，营养数值仅为估计')
+    } catch (error) {
+      notify(error.message)
+    } finally {
+      busy.value = false
+    }
+    return
+  }
   busy.value = true
   timer.value = setTimeout(() => {
     result.value = {
@@ -166,7 +204,9 @@ onBeforeUnmount(() => {
           <h2>饮食识别</h2>
           <p>食物照片或营养成分表，辅助了解摄入。</p>
         </div>
-        <span class="pill orange">演示功能</span>
+        <span class="pill orange">{{
+          demoMode ? '演示功能' : foodEnabled ? 'AI 营养估算' : '待开通'
+        }}</span>
       </div>
       <div class="segmented">
         <button :class="{ active: mode === 'food' }" @click="setMode('food')">餐食照片</button
@@ -180,17 +220,39 @@ onBeforeUnmount(() => {
         /><template v-else
           ><span class="upload-icon"><Icon name="upload" :size="28" /></span
           ><strong>添加一张{{ mode === 'food' ? '餐食照片' : '营养成分表' }}</strong
-          ><span>点击选择图片 · JPG / PNG 等 · 最大 10MB</span></template
+          ><span>点击选择图片 · JPG / PNG 等 · 最大 8MB</span></template
         ></label
       >
-      <div class="info-box">当前与小程序原型一致，使用固定演示结果，不会上传或真实识别图片。</div>
-      <button class="btn primary full" :disabled="busy" @click="identify">
-        {{ busy ? '正在生成演示结果…' : file ? '查看演示分析' : '体验演示分析' }}
+      <div class="info-box">
+        {{
+          demoMode
+            ? '当前为演示模式，不会上传图片。'
+            : '经你同意后，图片将发送给 AI 服务商分析；结果仅为营养估值，请自行核对。'
+        }}
+      </div>
+      <label v-if="!demoMode && foodEnabled" class="row"
+        ><input v-model="consent" type="checkbox" />同意将所选图片发送给 AI 服务商分析</label
+      ><button
+        class="btn primary full"
+        :disabled="busy || (!demoMode && (!foodEnabled || !file || !consent))"
+        @click="identify"
+      >
+        {{
+          busy
+            ? '正在分析…'
+            : !demoMode
+              ? foodEnabled
+                ? '识别所选图片'
+                : '饮食识别尚未开通'
+              : file
+                ? '查看演示分析'
+                : '体验演示分析'
+        }}
       </button>
       <div v-if="result" class="meal-result">
         <div class="section-heading">
           <h3>{{ result.title }}</h3>
-          <span class="pill">演示结果</span>
+          <span class="pill">{{ result.is_estimate ? 'AI 估算结果' : '演示结果' }}</span>
         </div>
         <label class="row between"
           >份量<select v-model.number="result.portion" :disabled="result.logged_to_protein">

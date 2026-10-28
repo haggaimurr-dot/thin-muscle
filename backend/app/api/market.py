@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.db import get_db
+from app.core.config import settings
 from app.models.entities import MarketComment, MarketLike, Purchase, User
 from app.schemas.market import AssembleRequest, CommentCreate, ListingCreate, ReplicateRequest
 from app.services import market as svc
@@ -101,6 +102,8 @@ def replicate_listing(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ):
+    if not settings.allow_demo_auth:
+        raise HTTPException(503, "支付渠道尚未启用，暂不允许复刻付费商品")
     listing, _ = svc.get_listing(db, listing_id)
     order, node = svc.purchase(db, listing, user, body)
     return {

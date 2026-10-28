@@ -3,8 +3,25 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     app_name: str = "thin-muscle-api"
-    debug: bool = True
+    debug: bool = False
+    allow_demo_auth: bool = False
+    seed_demo_data: bool = False
+    cookie_secure: bool = True
+    public_origin: str = ""
+    cors_origins: list[str] = []
     database_url: str = "sqlite:///./thin_muscle.db"
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_payment_methods: list[str] = ["card"]
+    twilio_account_sid: str = ""
+    twilio_auth_token: str = ""
+    twilio_verify_service_sid: str = ""
+    wx_web_app_id: str = ""
+    wx_web_app_secret: str = ""
+    ai_gateway_base_url: str = "https://api.apikey.fan/v1"
+    ai_gateway_api_key: str = ""
+    ai_vision_model: str = ""
+    ai_food_enabled: bool = False
     # 市场：标价=买家实付，平台从中抽 15%
     market_fee_rate: float = 0.15
     # 对象存储（密钥私聊后注入）

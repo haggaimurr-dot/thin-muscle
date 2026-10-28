@@ -1,5 +1,6 @@
 import { reactive, computed, watch } from 'vue'
 import { PLAN } from './data'
+import { api } from './api'
 export function read(key, fallback) {
   try {
     const v = JSON.parse(localStorage.getItem(key))
@@ -31,6 +32,8 @@ export const state = reactive({
   plans: read('tm_vue_plans', {}),
   toast: '',
   storageError: false,
+  syncStatus: 'offline',
+  syncError: '',
 })
 const keys = {
   phase: 'tm_phase',
@@ -44,18 +47,46 @@ const keys = {
   ai: 'tm_ai_hist_v1',
   plans: 'tm_vue_plans',
 }
+let syncUser = null
+let syncing = false
+let revision = 0
+let syncTimer
+let syncEpoch = 0
+let sending = false
+let changed = 0
+function snapshot() {
+  return Object.fromEntries(
+    Object.keys(keys).map((field) => [field, JSON.parse(JSON.stringify(state[field]))]),
+  )
+}
+function cacheKey() {
+  return 'tm_account_cache_' + syncUser
+}
+function saveCache(dirty) {
+  localStorage.setItem(cacheKey(), JSON.stringify({ revision, data: snapshot(), dirty }))
+}
 for (const [field, key] of Object.entries(keys))
   watch(
     () => state[field],
     (value) => {
       try {
-        localStorage.setItem(key, JSON.stringify(value))
+        if (syncing) return
+        if (!syncUser) localStorage.setItem(key, JSON.stringify(value))
+        else {
+          changed++
+          saveCache(true)
+          if (state.syncStatus !== 'conflict') {
+            state.syncStatus = 'pending'
+            clearTimeout(syncTimer)
+            syncTimer = setTimeout(flushSync, 800)
+          }
+        }
         state.storageError = false
       } catch {
         state.storageError = true
       }
     },
-    { deep: true },
+    { deep: true, flush: 'sync' },
   )
 let toastTimer
 export function notify(message) {
@@ -212,4 +243,143 @@ export function restoreBackup(data) {
   }
   for (const [field, key] of Object.entries(keys)) state[field] = data[key]
   notify('备份已导入')
+}
+
+function applyData(data) {
+  syncing = true
+  for (const field of Object.keys(keys)) state[field] = data[field]
+  syncing = false
+}
+export async function connectSync(userId) {
+  syncUser = userId
+  revision = 0
+  changed = 0
+  const epoch = ++syncEpoch
+  clearTimeout(syncTimer)
+  state.syncStatus = 'loading'
+  state.syncError = ''
+  try {
+    const remote = await api('/data')
+    if (epoch !== syncEpoch) return
+    const cached = read(cacheKey(), null)
+    revision = remote.revision
+    const empty = {
+      phase: 1,
+      logs: {},
+      done: {},
+      protein: {},
+      hits: {},
+      checks: {},
+      videos: {},
+      meals: [],
+      ai: [],
+      plans: {},
+    }
+    if (cached?.dirty) {
+      applyData(cached.data)
+      if (cached.revision !== revision) {
+        state.syncStatus = 'conflict'
+        state.syncError = '其他设备已更新记录。请先导出本机备份，再重新加载云端。'
+        return
+      }
+      state.syncStatus = 'pending'
+      await flushSync()
+    } else {
+      applyData(remote.data || empty)
+      saveCache(false)
+      state.syncStatus = 'synced'
+    }
+  } catch (error) {
+    if (epoch !== syncEpoch) return
+    const cached = read(cacheKey(), null)
+    if (cached?.data) {
+      revision = cached.revision
+      applyData(cached.data)
+    } else
+      applyData({
+        phase: 1,
+        logs: {},
+        done: {},
+        protein: {},
+        hits: {},
+        checks: {},
+        videos: {},
+        meals: [],
+        ai: [],
+        plans: {},
+      })
+    state.syncStatus = 'error'
+    state.syncError = error.message
+    throw error
+  }
+}
+export async function flushSync() {
+  if (
+    !syncUser ||
+    syncing ||
+    sending ||
+    ['conflict', 'loading', 'error'].includes(state.syncStatus)
+  )
+    return
+  const epoch = syncEpoch,
+    version = changed
+  sending = true
+  state.syncStatus = 'saving'
+  try {
+    const result = await api('/data', { revision, data: snapshot() }, 'PUT')
+    if (epoch !== syncEpoch) return
+    revision = result.revision
+    const dirty = changed !== version
+    saveCache(dirty)
+    state.syncStatus = dirty ? 'pending' : 'synced'
+    state.syncError = ''
+    if (dirty) syncTimer = setTimeout(flushSync, 100)
+  } catch (error) {
+    if (epoch !== syncEpoch) return
+    state.syncStatus = error.status === 409 ? 'conflict' : 'error'
+    state.syncError = error.message
+  } finally {
+    sending = false
+  }
+}
+export async function reloadCloud() {
+  // Called only after the explicit replacement confirmation in the UI.
+  const result = await api('/data')
+  revision = result.revision
+  applyData(
+    result.data || {
+      phase: 1,
+      logs: {},
+      done: {},
+      protein: {},
+      hits: {},
+      checks: {},
+      videos: {},
+      meals: [],
+      ai: [],
+      plans: {},
+    },
+  )
+  saveCache(false)
+  state.syncStatus = 'synced'
+  state.syncError = ''
+}
+export function disconnectSync() {
+  clearTimeout(syncTimer)
+  syncEpoch++
+  syncUser = null
+  state.syncStatus = 'offline'
+  state.syncError = ''
+  applyData({
+    phase: 1,
+    logs: {},
+    done: {},
+    protein: {},
+    hits: {},
+    checks: {},
+    videos: {},
+    meals: [],
+    ai: [],
+    plans: {},
+  })
 }

@@ -1,0 +1,32 @@
+# Replace training.example.com and paths. First obtain a certificate using the HTTP-only bootstrap config in DEPLOYMENT.md.
+server {
+    listen 80;
+    server_name training.example.com;
+    location /.well-known/acme-challenge/ { root /var/www/letsencrypt; }
+    location / { return 301 https://$host$request_uri; }
+}
+server {
+    listen 443 ssl;
+    server_name training.example.com;
+    ssl_certificate /etc/letsencrypt/live/training.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/training.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    client_max_body_size 9m;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options nosniff always;
+    add_header Referrer-Policy strict-origin-when-cross-origin always;
+    root /srv/thin-muscle/current/frontend/dist;
+    index index.html;
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_read_timeout 60s;
+        # OAuth authorization codes must not enter access logs.
+        access_log off;
+    }
+    location /health { proxy_pass http://127.0.0.1:8000; }
+    location ~ /\. { deny all; }
+    location / { try_files $uri $uri/ =404; }
+}

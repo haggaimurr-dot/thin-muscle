@@ -1,0 +1,23 @@
+[Unit]
+Description=Thin Muscle API
+After=network.target
+
+[Service]
+Type=simple
+User=www-data
+Group=www-data
+WorkingDirectory=/srv/thin-muscle/current/backend
+EnvironmentFile=/etc/thin-muscle/environment
+ExecStart=/srv/thin-muscle/current/backend/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers --forwarded-allow-ips=127.0.0.1 --no-access-log
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=thin-muscle
+ReadWritePaths=/var/lib/thin-muscle
+
+[Install]
+WantedBy=multi-user.target

@@ -21,13 +21,22 @@ export default defineConfig({
     {
       command: '.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001',
       cwd: fileURLToPath(new URL('../backend', import.meta.url)),
-      env: { DATABASE_URL: `sqlite:///${database}` },
+      env: {
+        DATABASE_URL: `sqlite:///${database}`,
+        ALLOW_DEMO_AUTH: process.env.AUTH_E2E ? 'false' : 'true',
+        SEED_DEMO_DATA: process.env.AUTH_E2E ? 'false' : 'true',
+        COOKIE_SECURE: 'false',
+        PUBLIC_ORIGIN: 'http://127.0.0.1:5174',
+      },
       url: 'http://127.0.0.1:8001/health',
       reuseExistingServer: false,
     },
     {
       command: 'npm run dev -- --port 5174 --strictPort',
-      env: { API_PROXY_TARGET: 'http://127.0.0.1:8001' },
+      env: {
+        API_PROXY_TARGET: 'http://127.0.0.1:8001',
+        VITE_DEMO_MODE: process.env.AUTH_E2E ? 'false' : 'true',
+      },
       url: 'http://127.0.0.1:5174',
       reuseExistingServer: false,
     },
