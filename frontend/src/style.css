@@ -3781,3 +3781,29 @@ input[type='checkbox'] {
     transform: none;
   }
 }
+.skip-link {
+  position: fixed;
+  left: 12px;
+  top: -80px;
+  z-index: 10000;
+  background: white;
+  padding: 12px;
+  border: 2px solid #247349;
+}
+.skip-link:focus {
+  top: 12px;
+}
+:focus-visible {
+  outline: 3px solid #247349;
+  outline-offset: 3px;
+}
+.reply-list {
+  grid-column: 1 / -1;
+  flex-basis: 100%;
+  min-width: 0;
+  width: 100%;
+}
+.comment-row {
+  flex-wrap: wrap;
+  align-items: center;
+}

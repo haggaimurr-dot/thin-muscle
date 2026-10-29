@@ -13,6 +13,8 @@ from app.core.config import settings
 from app.core.db import get_db
 from app.models.account import PaymentOrder
 from app.models.entities import User, TrainingNode, Purchase
+from app.services.payment_events import record_event, order_facts, KINDS
+from app.services.account_lock import lock_account
 from app.schemas.market import ReplicateRequest
 from app.services import market as svc
 
@@ -57,7 +59,12 @@ async def checkout(
         user_id=user.id,
         listing_id=listing.id,
         amount=listing.price_fen,
-        snapshot=json.dumps(svc.listing_payload(listing)),
+        snapshot=json.dumps(
+            {
+                **svc.listing_payload(listing),
+                "source_version": svc.current_work_version(db, listing.id),
+            }
+        ),
     )
     db.add(order)
     db.commit()
@@ -66,6 +73,7 @@ async def checkout(
         "success_url": settings.public_origin + "/#/market?payment=return",
         "cancel_url": settings.public_origin + "/#/market?payment=cancel",
         "metadata[order_id]": order.id,
+        "payment_intent_data[metadata][order_id]": order.id,
         "line_items[0][price_data][currency]": "cny",
         "line_items[0][price_data][unit_amount]": str(order.amount),
         "line_items[0][price_data][product_data][name]": listing.title,
@@ -124,9 +132,17 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
         event = json.loads(content)
     except (ValueError, StopIteration):
         raise HTTPException(400, "回调签名无效")
+    if event.get("type") in KINDS:
+        # Preserve provider facts only. Refund execution, entitlement and settlement
+        # policy require a separate agreed business process.
+        record_event(db, event, hashlib.sha256(content).hexdigest())
+        db.commit()
+        return {"ok": True}
     if event.get("type") not in (
         "checkout.session.completed",
         "checkout.session.async_payment_succeeded",
+        "checkout.session.expired",
+        "checkout.session.async_payment_failed",
     ):
         return {"ok": True}
     data = event.get("data", {}).get("object", {})
@@ -140,16 +156,34 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
         or data.get("mode") != "payment"
     ):
         raise HTTPException(400, "订单金额或标识不一致")
+    lock_account(db.get(User, order.user_id), db)
+    record_event(db, event, hashlib.sha256(content).hexdigest(), order.id)
+    if event["type"] in (
+        "checkout.session.expired",
+        "checkout.session.async_payment_failed",
+    ):
+        status = "expired" if event["type"].endswith("expired") else "failed"
+        db.execute(
+            update(PaymentOrder)
+            .where(PaymentOrder.id == order.id, PaymentOrder.status == "pending")
+            .values(status=status)
+        )
+        db.commit()
+        return {"ok": True}
     if data.get("payment_status") != "paid":
+        db.commit()
         return {"ok": True}
     # Only the verified provider callback can atomically grant ownership.
     claimed = db.execute(
         update(PaymentOrder)
-        .where(PaymentOrder.id == order.id, PaymentOrder.status == "pending")
+        .where(
+            PaymentOrder.id == order.id,
+            PaymentOrder.status.in_(["pending", "failed", "expired"]),
+        )
         .values(status="paid")
     )
     if claimed.rowcount == 0:
-        db.rollback()
+        db.commit()
         return {"ok": True}
     if (
         not db.query(Purchase)
@@ -201,3 +235,53 @@ async def webhook(request: Request, db: Session = Depends(get_db)):
         )
     db.commit()
     return {"ok": True}
+
+
+@router.get("/orders")
+def orders(
+    before: str | None = None,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+):
+    query = db.query(PaymentOrder).filter_by(user_id=user.id)
+    if before:
+        query = query.filter(PaymentOrder.id < before)
+    rows = query.order_by(PaymentOrder.id.desc()).limit(21).all()
+    return {
+        "items": [
+            {
+                "id": r.id,
+                "title": json.loads(r.snapshot).get("title", "作品"),
+                "listing_id": r.listing_id,
+                "amount_fen": r.amount,
+                "status": r.status,
+                "created_at": r.created_at,
+                **order_facts(db, r),
+            }
+            for r in rows[:20]
+        ],
+        "next_cursor": rows[19].id if len(rows) > 20 else None,
+    }
+
+
+@router.get("/creator-ledger")
+def creator_ledger(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    # These are recorded gross splits, not payouts or withdrawable balances.
+    from sqlalchemy import func
+
+    totals = (
+        db.query(
+            func.coalesce(func.sum(Purchase.total_paid_fen), 0),
+            func.coalesce(func.sum(Purchase.platform_cut_fen), 0),
+            func.coalesce(func.sum(Purchase.creator_earn_fen), 0),
+        )
+        .filter_by(seller_id=user.id)
+        .one()
+    )
+    return {
+        "gross_fen": totals[0],
+        "recorded_platform_fen": totals[1],
+        "recorded_creator_fen": totals[2],
+        "payout_enabled": False,
+        "note": "仅交易账面分成，未扣退款/争议/渠道手续费；不代表可结算余额。退款执行、争议处理及Stripe Connect结算尚未开放。",
+    }

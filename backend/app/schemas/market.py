@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
+from urllib.parse import urlsplit
 
 
 Kind = Literal["plan", "lesson"]
@@ -16,6 +17,19 @@ class MediaItem(BaseModel):
     type: MediaType
     url: str
     title: str = ""
+
+    @field_validator("url")
+    @classmethod
+    def valid_url(cls, value):
+        parsed = urlsplit(value)
+        if (
+            parsed.scheme not in ("https", "http")
+            or not parsed.hostname
+            or parsed.username
+            or parsed.password
+        ):
+            raise ValueError("媒体链接须为有效HTTP(S)地址")
+        return value
 
 
 class ExerciseItem(BaseModel):
@@ -54,6 +68,13 @@ class ListingCreate(BaseModel):
     cues: list[str] = []
     demo_media: list[MediaItem] = []
 
+    @field_validator("title")
+    @classmethod
+    def title_not_blank(cls, value):
+        if not value.strip():
+            raise ValueError("作品名称不能为空")
+        return value.strip()
+
     @model_validator(mode="after")
     def validate_by_kind(self):
         if self.kind == "plan":
@@ -88,6 +109,14 @@ class ListingCreate(BaseModel):
 class CommentCreate(BaseModel):
     text: str = Field(min_length=1, max_length=500)
 
+    @field_validator("text")
+    @classmethod
+    def clean_text(cls, value):
+        value = value.strip()
+        if not value or any(ord(c) < 32 and c not in "\n\r\t" for c in value):
+            raise ValueError("留言不能为空或包含控制字符")
+        return value
+
 
 class ReplicateRequest(BaseModel):
     ack_weight: bool
@@ -116,6 +145,7 @@ class AssembleRequest(BaseModel):
     days: list[AssembleDay]
     ack_weight: bool
     ack_level: bool
+    restored_from_id: Optional[int] = Field(default=None, ge=1)
 
     @field_validator("days")
     @classmethod
@@ -129,5 +159,7 @@ class AssembleRequest(BaseModel):
             # lesson 不能单独填满：每个 exercise 必须有 name（可执行），lesson 只是附加
             for ex in d.exercises:
                 if not ex.name:
-                    raise ValueError("学法位必须挂在具体动作上，不能用 lesson 单独占满力量日")
+                    raise ValueError(
+                        "学法位必须挂在具体动作上，不能用 lesson 单独占满力量日"
+                    )
         return v

@@ -22,6 +22,13 @@ class Settings(BaseSettings):
     ai_gateway_api_key: str = ""
     ai_vision_model: str = ""
     ai_food_enabled: bool = False
+    smtp_host: str = ""
+    smtp_port: int = 465
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_sender: str = ""
+    smtp_starttls: bool = False
+    moderation_admin_ids: list[int] = []
     # 市场：标价=买家实付，平台从中抽 15%
     market_fee_rate: float = 0.15
     # 对象存储（密钥私聊后注入）

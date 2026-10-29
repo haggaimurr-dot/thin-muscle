@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, LargeBinary
+from sqlalchemy import String, Integer, Text, DateTime, ForeignKey, LargeBinary, Boolean
 from sqlalchemy.orm import Mapped, mapped_column
 from app.core.db import Base
 
@@ -74,3 +74,61 @@ class BadgeAward(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
     badge_id: Mapped[str] = mapped_column(String(64), primary_key=True)
     earned_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class RecoveryEmail(Base):
+    __tablename__ = "account_recovery_emails"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    email: Mapped[str] = mapped_column(String(254))
+
+
+class NodePreference(Base):
+    __tablename__ = "node_preferences"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    node_id: Mapped[int] = mapped_column(
+        ForeignKey("training_nodes.id"), primary_key=True
+    )
+    favorite: Mapped[bool] = mapped_column(Boolean, default=False)
+    category: Mapped[str] = mapped_column(String(32), default="")
+
+
+class DataMeta(Base):
+    __tablename__ = "data_meta"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    updated_at: Mapped[datetime] = mapped_column(DateTime)
+
+
+class ReminderSetting(Base):
+    __tablename__ = "reminder_settings"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    payload: Mapped[str] = mapped_column(Text)
+
+
+class WorkFavorite(Base):
+    __tablename__ = "work_favorites"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    listing_id: Mapped[int] = mapped_column(ForeignKey("market_listings.id"), primary_key=True)
+
+
+class RankPrivacy(Base):
+    __tablename__='rank_privacy'
+    user_id:Mapped[int]=mapped_column(ForeignKey('users.id'),primary_key=True)
+    participate:Mapped[bool]=mapped_column(Boolean,default=True)
+    show_weight:Mapped[bool]=mapped_column(Boolean,default=True)
+
+
+class ReminderDelivery(Base):
+    __tablename__ = "reminder_deliveries"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    day: Mapped[str] = mapped_column(String(10), primary_key=True)
+    kind: Mapped[str] = mapped_column(String(16), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+
+
+class AccountToken(Base):
+    __tablename__ = "account_tokens"
+    digest: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
+    purpose: Mapped[str] = mapped_column(String(24))
+    email: Mapped[str] = mapped_column(String(254), default="")
+    expires_at: Mapped[datetime] = mapped_column(DateTime)

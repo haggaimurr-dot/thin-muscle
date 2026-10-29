@@ -1,0 +1,27 @@
+import { test, expect } from '@playwright/test'
+test.skip(!!process.env.AUTH_E2E, 'Demo ranking')
+test('privacy settings persist and friend board is explicit', async ({ page }) => {
+  await page.goto('/#/community')
+  await page.getByRole('button', { name: '训练排行榜', exact: true }).click()
+  await page.getByLabel('榜单范围').selectOption('friends')
+  await expect(page.locator('main')).toContainText('好友为互相关注')
+  const settings = page.getByRole('region', { name: '排名隐私与个人趋势' })
+  await settings.locator('summary').click()
+  await settings.getByLabel('参与公开榜与好友榜').uncheck()
+  await settings.getByLabel('在社区公开体重及分组').uncheck()
+  const saved = page.waitForResponse(
+    (r) => r.url().includes('/home/rank-privacy') && r.request().method() === 'PUT',
+  )
+  await settings.getByRole('button', { name: '保存排行隐私' }).click()
+  expect((await saved).ok()).toBe(true)
+  await expect(settings.getByLabel('参与公开榜与好友榜')).not.toBeChecked()
+  const board = await page.request.get('/api/v1/home/rank', { headers: { 'X-User-Id': '4' } })
+  expect((await board.json()).full.some((u) => u.user_id === 4)).toBe(false)
+  await page.reload()
+  await page.getByRole('button', { name: '训练排行榜', exact: true }).click()
+  await settings.locator('summary').click()
+  await expect(settings.getByLabel('参与公开榜与好友榜')).not.toBeChecked()
+  await settings.getByLabel('参与公开榜与好友榜').check()
+  await settings.getByLabel('在社区公开体重及分组').check()
+  await settings.getByRole('button', { name: '保存排行隐私' }).click()
+})

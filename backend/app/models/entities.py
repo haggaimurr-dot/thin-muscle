@@ -7,6 +7,7 @@ from sqlalchemy import (
     Float,
     ForeignKey,
     Integer,
+    Index,
     String,
     Text,
     UniqueConstraint,
@@ -52,7 +53,9 @@ class MarketListing(Base):
     media_json: Mapped[str] = mapped_column(Text, default="[]")  # [{type,url,...}]
     body_text: Mapped[str] = mapped_column(Text, default="")
     # plan only
-    cycle: Mapped[Optional[str]] = mapped_column(String(16), nullable=True, index=True)  # week|month|full
+    cycle: Mapped[Optional[str]] = mapped_column(
+        String(16), nullable=True, index=True
+    )  # week|month|full
     week_index: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     days_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     rhythm: Mapped[str] = mapped_column(String(256), default="")
@@ -67,15 +70,21 @@ class MarketListing(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
     seller = relationship("User", back_populates="listings")
-    comments = relationship("MarketComment", back_populates="listing", cascade="all, delete-orphan")
-    likes = relationship("MarketLike", back_populates="listing", cascade="all, delete-orphan")
+    comments = relationship(
+        "MarketComment", back_populates="listing", cascade="all, delete-orphan"
+    )
+    likes = relationship(
+        "MarketLike", back_populates="listing", cascade="all, delete-orphan"
+    )
 
 
 class MarketComment(Base):
     __tablename__ = "market_comments"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    listing_id: Mapped[int] = mapped_column(ForeignKey("market_listings.id"), index=True)
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("market_listings.id"), index=True
+    )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     text: Mapped[str] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
@@ -88,7 +97,9 @@ class MarketLike(Base):
     __table_args__ = (UniqueConstraint("listing_id", "user_id", name="uq_like"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    listing_id: Mapped[int] = mapped_column(ForeignKey("market_listings.id"), index=True)
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("market_listings.id"), index=True
+    )
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
@@ -101,7 +112,9 @@ class Purchase(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     buyer_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    listing_id: Mapped[int] = mapped_column(ForeignKey("market_listings.id"), index=True)
+    listing_id: Mapped[int] = mapped_column(
+        ForeignKey("market_listings.id"), index=True
+    )
     seller_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
     total_paid_fen: Mapped[int] = mapped_column(Integer)
     platform_cut_fen: Mapped[int] = mapped_column(Integer)
@@ -112,7 +125,9 @@ class Purchase(Base):
     status: Mapped[str] = mapped_column(String(16), default="paid")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
-    buyer = relationship("User", back_populates="purchases", foreign_keys="Purchase.buyer_id")
+    buyer = relationship(
+        "User", back_populates="purchases", foreign_keys="Purchase.buyer_id"
+    )
 
 
 class TrainingNode(Base):
@@ -122,7 +137,9 @@ class TrainingNode(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     owner_id: Mapped[int] = mapped_column(ForeignKey("users.id"), index=True)
-    source_listing_id: Mapped[int] = mapped_column(ForeignKey("market_listings.id"), index=True)
+    source_listing_id: Mapped[int] = mapped_column(
+        ForeignKey("market_listings.id"), index=True
+    )
     kind: Mapped[str] = mapped_column(String(16), index=True)
     title: Mapped[str] = mapped_column(String(128))
     level: Mapped[str] = mapped_column(String(16))
@@ -150,3 +167,25 @@ class AssembledPlan(Base):
     ack_level: Mapped[bool] = mapped_column(Boolean, default=False)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+# Composite indexes match public keyset sort predicates.
+Index(
+    "ix_market_status_created_id",
+    MarketListing.status,
+    MarketListing.created_at,
+    MarketListing.id,
+)
+Index(
+    "ix_market_status_price_id",
+    MarketListing.status,
+    MarketListing.price_fen,
+    MarketListing.id,
+)
+Index(
+    "ix_market_status_likes_id",
+    MarketListing.status,
+    MarketListing.likes_count,
+    MarketListing.id,
+)
+Index("ix_nodes_owner_id", TrainingNode.owner_id, TrainingNode.id)

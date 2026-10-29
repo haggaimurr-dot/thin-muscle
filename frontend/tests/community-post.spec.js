@@ -1,0 +1,17 @@
+import {test,expect} from '@playwright/test'
+test.skip(!!process.env.AUTH_E2E,'Demo posts')
+test('publish report and delete own post',async({page})=>{
+ await page.goto('/#/community')
+ await page.getByLabel('分享训练动态').fill('测试训练分享_'+Date.now())
+ await page.getByRole('button',{name:'发布动态',exact:true}).click()
+ const post=page.locator('.feed-card').first()
+ await expect(post).toContainText('测试训练分享_')
+ await post.getByRole('button',{name:'举报动态'}).click()
+ await page.getByRole('dialog').getByLabel('举报原因').fill('测试举报流程')
+ await page.getByRole('button',{name:'提交举报'}).click()
+ await expect(page.getByRole('dialog')).toContainText('举报已受理')
+ await page.getByRole('button',{name:'完成',exact:true}).click()
+ await post.getByRole('button',{name:'删除本人动态'}).click()
+ await page.getByRole('button',{name:'确认删除动态'}).click()
+ await expect(page.locator('main')).not.toContainText('测试训练分享_')
+})

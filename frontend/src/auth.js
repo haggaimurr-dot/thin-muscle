@@ -1,7 +1,7 @@
 import { reactive } from 'vue'
 import { api, setCsrf, demoMode } from './api'
-import { connectSync, disconnectSync, state, flushSync } from './store'
-export const auth = reactive({ ready: false, user: null, error: '' })
+import { connectSync, disconnectSync, state, flushSync, connectOffline } from './store'
+export const auth = reactive({ ready: false, user: null, error: '', offline: false })
 export async function initAuth() {
   if (demoMode) {
     auth.ready = true
@@ -10,10 +10,31 @@ export async function initAuth() {
   try {
     const data = await api('/auth/me')
     setCsrf(data.csrf)
+    if (
+      localStorage.getItem('tm_offline_user') &&
+      localStorage.getItem('tm_offline_user') !== String(data.user.id)
+    )
+      localStorage.removeItem('tm_offline_user')
+    auth.offline = false
     auth.user = data.user
     await connectSync(data.user.id)
   } catch (error) {
-    if (error.status !== 401) auth.error = error.message
+    const cachedId = localStorage.getItem('tm_offline_user')
+    if (!navigator.onLine && cachedId && /^\d+$/.test(cachedId)) {
+      try {
+        connectOffline(Number(cachedId))
+        auth.user = { id: Number(cachedId), nickname: '离线缓存' }
+        auth.offline = true
+      } catch (e) {
+        auth.error = e.message
+      }
+    } else if (error.status === 401) {
+      const wasOffline = auth.offline
+      auth.user = null
+      auth.offline = false
+      disconnectSync()
+      if (wasOffline) auth.error = '离线登录已失效，请重新登录；本机未同步记录已保留'
+    } else auth.error = error.message
   } finally {
     auth.ready = true
   }
@@ -21,6 +42,12 @@ export async function initAuth() {
 export async function signIn(credentials, register = false, endpoint = null) {
   const data = await api('/auth/' + (endpoint || (register ? 'register' : 'login')), credentials)
   setCsrf(data.csrf)
+  if (
+    localStorage.getItem('tm_offline_user') &&
+    localStorage.getItem('tm_offline_user') !== String(data.user.id)
+  )
+    localStorage.removeItem('tm_offline_user')
+  auth.offline = false
   auth.user = data.user
   await connectSync(data.user.id)
 }
@@ -32,13 +59,36 @@ export async function signOut() {
   if (['conflict', 'error'].includes(state.syncStatus))
     throw new Error('请先导出本机备份并解决同步问题后退出')
   await api('/auth/logout', {})
+  localStorage.removeItem('tm_offline_user')
   setCsrf('')
   auth.user = null
   disconnectSync()
+}
+export function finishAccountAction(eraseCache = false) {
+  let cleared = true
+  localStorage.removeItem('tm_offline_user')
+  if (eraseCache && auth.user) {
+    try {
+      localStorage.removeItem('tm_account_cache_' + auth.user.id)
+      localStorage.removeItem('tm_auto_backup_' + auth.user.id)
+      localStorage.removeItem('tm_auto_backup_enabled_' + auth.user.id)
+    } catch {
+      cleared = false
+    }
+  }
+  setCsrf('')
+  auth.user = null
+  auth.error = ''
+  disconnectSync()
+  return cleared
 }
 window.addEventListener('session-expired', () => {
   auth.user = null
   setCsrf('')
   disconnectSync()
   auth.error = '登录已过期，请重新登录；待同步记录已保留在本机缓存'
+})
+
+window.addEventListener('online', () => {
+  if (auth.offline) initAuth()
 })

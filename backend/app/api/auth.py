@@ -40,8 +40,12 @@ def session_for(request, db):
 def current_user(request: Request, db: Session = Depends(get_db)):
     session = session_for(request, db)
     user = db.get(User, session.user_id)
-    if user is None:
+    if user is None or user.openid.startswith("deleted:"):
         raise HTTPException(401, "账号不存在")
+    if request.method not in ("GET", "HEAD", "OPTIONS"):
+        from app.services.account_lock import lock_account
+
+        lock_account(user, db)
     return user
 
 
@@ -146,6 +150,8 @@ def login(
 def me(request: Request, response: Response, db: Session = Depends(get_db)):
     session = session_for(request, db)
     user = db.get(User, session.user_id)
+    if user is None or user.openid.startswith("deleted:"):
+        raise HTTPException(401, "账号不可用")
     response.headers["Cache-Control"] = "no-store"
     return {"user": {"id": user.id, "nickname": user.nickname}, "csrf": session.csrf}
 

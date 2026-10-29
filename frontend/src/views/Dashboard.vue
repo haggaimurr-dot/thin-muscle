@@ -1,21 +1,33 @@
 <script setup>
+import OfflineSettings from '../components/OfflineSettings.vue'
+import BackupCenter from '../components/BackupCenter.vue'
 import { computed, onMounted, ref } from 'vue'
 import Icon from '../components/Icon.vue'
 import BadgeSummary from '../components/BadgeSummary.vue'
+import ProgressTrends from '../components/ProgressTrends.vue'
+import ReminderSettings from '../components/ReminderSettings.vue'
 import {
   state,
   today,
   week,
   getPlan,
   strengthDone,
+  strengthSchedule,
+  strengthDays,
   proteinToday,
+  proteinTarget,
   proteinDays,
   overload,
   streak,
   isChecked,
+  overloadDetails,
+  ymd,
 } from '../store'
 import { PHASES, WEEK_LABEL } from '../data'
 import { api } from '../api'
+import { nutritionGoalAt } from '../nutrition-goals'
+const targetFor = (day) =>
+  nutritionGoalAt(state.nutritionGoals, dateFor(day), state.proteinTarget).protein
 const ranking = ref(null),
   apiError = ref('')
 onMounted(async () => {
@@ -26,7 +38,9 @@ onMounted(async () => {
   }
 })
 const plan = computed(() => getPlan(today)),
-  completion = computed(() => Math.round((strengthDone.value / 3) * 100))
+  completion = computed(() =>
+    Math.round((strengthDone.value / Math.max(1, strengthSchedule.value.length)) * 100),
+  )
 const bars = computed(() =>
   Array.from({ length: 7 }, (_, i) => {
     const p = getPlan(i + 1)
@@ -46,7 +60,7 @@ const metrics = computed(() => [
   {
     label: '本周力量训练',
     value: strengthDone.value,
-    suffix: '/ 3 天',
+    suffix: `/ ${strengthSchedule.value.length} 天`,
     icon: 'training',
     note: strengthDone.value >= 2 ? '已达到有效训练周' : '完成 2 天，即是有效训练周',
     tone: 'green',
@@ -64,7 +78,7 @@ const metrics = computed(() => [
     value: proteinDays.value,
     suffix: '/ 7 天',
     icon: 'nutrition',
-    note: '每天 150–155g，给恢复加点料',
+    note: `每天至少 ${proteinTarget.value}g，给恢复加点料`,
     tone: 'blue',
   },
   {
@@ -76,6 +90,20 @@ const metrics = computed(() => [
     tone: 'purple',
   },
 ])
+function dateFor(day, w = week) {
+  const date = new Date(w + 'T12:00:00')
+  date.setDate(date.getDate() + day - 1)
+  return ymd(date)
+}
+const weekDetails = computed(() =>
+  Object.keys(state.done)
+    .sort()
+    .reverse()
+    .map((w) => ({
+      week: w,
+      days: strengthDays(w).filter((d) => state.done[w]?.[d]),
+    })),
+)
 </script>
 <template>
   <div class="page-heading">
@@ -120,9 +148,59 @@ const metrics = computed(() => [
         {{ m.value }}<small>{{ m.suffix }}</small>
       </div>
       <p>{{ m.note }}</p>
+      <details class="metric-detail">
+        <summary>{{ m.label }}规则与明细</summary>
+        <template v-if="m.icon === 'training'">
+          <p>
+            本周力量日（默认周一、三、五，自定义计划按日类型）中，早晚计划的全部动作均勾选完成才计 1
+            天；记录组数本身不代表完成。周目标 {{ strengthSchedule.length }} 天，有效周至少 2
+            天。公共榜单和徽章仍使用其固定日期规则。
+          </p>
+          <p v-for="d in strengthSchedule" :key="d">
+            {{ dateFor(d) }} · {{ state.done[week]?.[d] ? '已完成' : '未完成' }}
+          </p>
+          <RouterLink to="/training?view=week">查看计划与完成勾选</RouterLink>
+        </template>
+        <template v-else-if="m.icon === 'trend'">
+          <p>
+            按本地周一至周日，与上周同名动作的最高重量比较；重量相同时比较次数。缺少可解析的数字重量或次数不计，无上周记录不计进步。
+          </p>
+          <p v-if="!overloadDetails.length">暂无可比较的重量与次数记录。</p>
+          <p v-for="e in overloadDetails" :key="e.name">
+            {{ e.name }}：本周 {{ e.current.load }}kg × {{ e.current.reps }}；上周
+            {{ e.previous ? `${e.previous.load}kg × ${e.previous.reps}` : '无记录' }} ·
+            {{ e.improved ? '进步' : '未计进步' }}
+          </p>
+          <RouterLink to="/training?view=history">查看来源训练记录</RouterLink>
+        </template>
+        <template v-else-if="m.icon === 'nutrition'">
+          <p>
+            本周每天蛋白累计达到当日生效目标计为达标；今日目标
+            {{ proteinTarget }}g，来源包括餐食计入与手动克数调整。按设备本地日期及周一至周日统计。
+          </p>
+          <p v-for="d in 7" :key="d">
+            {{ dateFor(d) }} · {{ Number(state.protein[week]?.[d] || 0) }}g ·
+            {{ Number(state.protein[week]?.[d] || 0) >= targetFor(d) ? '达标' : '未达标' }}
+          </p>
+          <RouterLink to="/nutrition">查看餐食来源及调整</RouterLink>
+        </template>
+        <template v-else>
+          <p>
+            从本周向前连续计算，每周力量日（包含自定义安排）完成至少 2
+            天才是有效周；遇到首个无效周停止。本周尚未达标时显示 0 周。
+          </p>
+          <p v-if="!weekDetails.length">暂无完成记录。</p>
+          <p v-for="w in weekDetails" :key="w.week">
+            {{ w.week }} 起 · {{ w.days.length }} / {{ strengthDays(w.week).length }} 天 ·
+            {{ w.days.length >= 2 ? '有效周' : '无效周' }}
+          </p>
+        </template>
+      </details>
     </article>
   </div>
   <BadgeSummary />
+  <ProgressTrends />
+  <ReminderSettings />
   <div class="dashboard-grid">
     <section class="panel progress-panel">
       <div class="section-heading">
@@ -178,7 +256,18 @@ const metrics = computed(() => [
                 .join(' / ')
             }}
           </p>
-          <small>{{ plan[session].length }} 个动作</small>
+          <small
+            >{{ plan[session].length }} 个动作 · 已完成
+            {{ plan[session].filter((e) => isChecked(today, session, e.name)).length }}</small
+          >
+          <p v-if="!plan[session].some((e) => isChecked(today, session, e.name))" class="tiny">
+            还未勾选完成，开始训练后记录第一组。
+          </p>
+          <RouterLink
+            :to="{ path: '/training', query: { date: ymd(), session } }"
+            class="text-link"
+            >{{ session === 'am' ? '记录今日早训' : '记录今日晚训' }}</RouterLink
+          >
         </div>
         <Icon name="right" :size="16" />
       </div>
@@ -197,19 +286,25 @@ const metrics = computed(() => [
             <p>今日蛋白摄入</p>
           </div>
         </div>
-        <RouterLink to="/nutrition" class="text-link"
+        <RouterLink
+          :to="{ path: '/nutrition', query: { date: ymd(), record: 'manual' } }"
+          class="text-link"
           >去记录<Icon name="right" :size="15"
         /></RouterLink>
       </div>
       <div class="protein-line">
-        <strong>{{ proteinToday }}<small> / 155 g</small></strong
+        <strong
+          >{{ proteinToday }}<small> / {{ proteinTarget }} g</small></strong
         ><span>{{
-          proteinToday >= 150 ? '今日已达标' : '还差 ' + Math.max(0, 150 - proteinToday) + 'g 达标'
+          proteinToday >= proteinTarget
+            ? '今日已达标'
+            : '还差 ' + Math.max(0, proteinTarget - proteinToday) + 'g 达标'
         }}</span>
       </div>
       <div class="progress-track">
-        <i :style="{ width: Math.min(100, (proteinToday / 155) * 100) + '%' }"></i>
+        <i :style="{ width: Math.min(100, (proteinToday / proteinTarget) * 100) + '%' }"></i>
       </div>
+      <p v-if="!proteinToday" class="tiny">今天还未记录蛋白，点击“去记录”添加第一餐。</p>
     </section>
     <section class="panel rank-preview">
       <div class="section-heading">
@@ -238,4 +333,6 @@ const metrics = computed(() => [
       <p v-else>正在连接训练伙伴…</p>
     </section>
   </div>
+  <BackupCenter />
+  <OfflineSettings />
 </template>

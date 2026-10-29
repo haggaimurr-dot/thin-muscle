@@ -12,6 +12,21 @@ from app.models.entities import User
 router = APIRouter(prefix="/photos", tags=["training photos"])
 
 
+@router.get("/usage")
+def usage(user: User = Depends(current_user), db: Session = Depends(get_db)):
+    used = (
+        db.query(func.coalesce(func.sum(func.length(TrainingPhoto.content)), 0))
+        .filter(TrainingPhoto.user_id == user.id)
+        .scalar()
+    )
+    return {
+        "used_bytes": used,
+        "limit_bytes": 100 * 1024 * 1024,
+        "max_photos": 3,
+        "max_file_bytes": 8 * 1024 * 1024,
+    }
+
+
 @router.post("")
 async def upload(
     file: UploadFile = File(...),
@@ -69,3 +84,22 @@ def read(
             "X-Content-Type-Options": "nosniff",
         },
     )
+
+
+@router.delete("/{photo_id}")
+def remove_unattached(
+    photo_id: str, user: User = Depends(current_user), db: Session = Depends(get_db)
+):
+    from app.models.account import UserData
+    from app.api.sync import referenced_photos
+    import json
+
+    photo = db.get(TrainingPhoto, photo_id)
+    if not photo or photo.user_id != user.id:
+        raise HTTPException(404, "图片不存在或无权查看")
+    row = db.get(UserData, user.id)
+    if row and photo_id in referenced_photos(json.loads(row.payload)):
+        raise HTTPException(409, "图片仍被训练记录引用")
+    db.delete(photo)
+    db.commit()
+    return {"ok": True}

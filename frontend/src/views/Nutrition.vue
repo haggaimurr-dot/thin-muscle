@@ -1,10 +1,45 @@
 <script setup>
-import { ref, computed, onBeforeUnmount, onMounted } from 'vue'
+import { ref, computed, onBeforeUnmount, onMounted, defineAsyncComponent } from 'vue'
 import Icon from '../components/Icon.vue'
 import Modal from '../components/Modal.vue'
+import MealLibrary from '../components/MealLibrary.vue'
+import NutritionGoals from '../components/NutritionGoals.vue'
+import FoodBatch from '../components/FoodBatch.vue'
+const FoodCatalog = defineAsyncComponent(() => import('../components/FoodCatalog.vue'))
 import { api, demoMode } from '../api'
-import { state, proteinToday, changeProtein, notify, uid, week, today, ymd, monday } from '../store'
+import {
+  state,
+  proteinTarget,
+  proteinToday,
+  changeProtein,
+  notify,
+  uid,
+  week,
+  today,
+  ymd,
+  monday,
+} from '../store'
 import { MEAL_MOCK_FOOD, MEAL_MOCK_LABEL } from '../data'
+import { useRoute } from 'vue-router'
+const route = useRoute()
+const targetInput = ref(proteinTarget.value)
+function saveTarget() {
+  if (!Number.isInteger(targetInput.value) || targetInput.value < 1 || targetInput.value > 1000) {
+    notify('蛋白目标须为1–1000g整数')
+    return
+  }
+  state.proteinTarget = targetInput.value
+  const active = Object.keys(state.nutritionGoals)
+    .filter((d) => d <= ymd())
+    .sort()
+    .at(-1)
+  if (active)
+    state.nutritionGoals = {
+      ...state.nutritionGoals,
+      [ymd()]: { ...state.nutritionGoals[active], protein: targetInput.value },
+    }
+  notify('蛋白目标已保存，账号将自动同步')
+}
 const consent = ref(false),
   foodEnabled = ref(false)
 onMounted(async () => {
@@ -52,7 +87,7 @@ async function identify() {
       form.append('mode', mode.value)
       form.append('consent', 'true')
       const response = await api('/ai/food', form)
-      state.meals.unshift({
+      result.value = {
         ...response,
         meal_id: uid(),
         date: ymd(),
@@ -61,8 +96,7 @@ async function identify() {
         created_at: new Date().toISOString(),
         file_name: file.value.name,
         logged_to_protein: false,
-      })
-      result.value = state.meals[0]
+      }
       notify('识别完成，营养数值仅为估计')
     } catch (error) {
       notify(error.message)
@@ -83,8 +117,6 @@ async function identify() {
       file_name: file.value?.name || '演示餐食',
       logged_to_protein: false,
     }
-    state.meals.unshift(result.value)
-    result.value = state.meals[0]
     busy.value = false
     notify('演示分析已完成')
   }, 700)
@@ -97,6 +129,20 @@ function mealDate(meal) {
 }
 function addMeal() {
   if (result.value.logged_to_protein) return
+  if (
+    !result.value.title?.trim() ||
+    ['base_kcal', 'base_protein_g', 'base_carb_g', 'base_fat_g', 'portion'].some(
+      (k) => !Number.isFinite(Number(result.value[k])) || Number(result.value[k]) < 0,
+    ) ||
+    Number(result.value.portion) <= 0
+  ) {
+    notify('请修正名称、非负营养值及有效份量')
+    return
+  }
+  if (!state.meals.some((m) => m.meal_id === result.value.meal_id)) {
+    state.meals.unshift({ ...result.value })
+    result.value = state.meals[0]
+  }
   const grams = scaled('base_protein_g')
   const recordedDate = new Date(mealDate(result.value) + 'T12:00:00')
   const recordedWeek = monday(recordedDate),
@@ -117,7 +163,60 @@ function undo(m) {
   m.logged_to_protein = false
   notify('已撤销这份饮食记录')
 }
-const manualOpen = ref(false)
+const manualOpen = ref(route.query.record === 'manual')
+const editingId = ref(null),
+  search = ref('')
+const filteredMeals = computed(() =>
+  state.meals.filter((m) => m.title?.toLowerCase().includes(search.value.trim().toLowerCase())),
+)
+function editMeal(m, copy = false) {
+  editingId.value = copy ? null : m.meal_id
+  const weighed = ['food-catalog', 'portion-estimate'].includes(m.source)
+  const nutrition = (key) => (weighed ? Math.round(m[key] * m.portion * 10) / 10 : m[key])
+  manual.value = {
+    title: m.title,
+    date: copy ? ymd() : mealDate(m),
+    protein: nutrition('base_protein_g'),
+    kcal: nutrition('base_kcal'),
+    carb: nutrition('base_carb_g'),
+    fat: nutrition('base_fat_g'),
+    portion: weighed ? 1 : m.portion,
+    note: m.advice || '',
+  }
+  manualOpen.value = true
+}
+function saveMealTemplate(m) {
+  state.mealTemplates ??= []
+  if (state.mealTemplates.length >= 1000) {
+    notify('模板已达1000条，请先整理')
+    return
+  }
+  state.mealTemplates.unshift({
+    template_id: uid(),
+    title: m.title,
+    base_kcal: m.base_kcal,
+    base_protein_g: m.base_protein_g,
+    base_carb_g: m.base_carb_g,
+    base_fat_g: m.base_fat_g,
+    portion: 1,
+    advice: m.advice || '',
+  })
+  notify('常用餐食模板已保存')
+}
+function newMeal() {
+  editingId.value = null
+  manual.value = {
+    title: '',
+    date: ymd(),
+    protein: 0,
+    kcal: 0,
+    carb: 0,
+    fat: 0,
+    portion: 1,
+    note: '',
+  }
+  manualOpen.value = true
+}
 const manual = ref({
   title: '',
   date: ymd(),
@@ -149,8 +248,14 @@ function saveManualMeal() {
     notify('请填写有效的营养数值和份量')
     return
   }
-  state.meals.unshift({
-    meal_id: uid(),
+  const previous = editingId.value ? state.meals.find((m) => m.meal_id === editingId.value) : null
+  if (editingId.value && !previous) {
+    notify('记录已变化，请重新打开')
+    return
+  }
+  if (previous?.logged_to_protein) undo(previous)
+  const saved = {
+    meal_id: editingId.value || uid(),
     title: m.title.trim(),
     date: m.date,
     created_at: new Date().toISOString(),
@@ -166,8 +271,10 @@ function saveManualMeal() {
     advice: m.note,
     sugar_warn: false,
     logged_to_protein: false,
-  })
-  result.value = state.meals[0]
+  }
+  if (previous) Object.assign(previous, saved)
+  else state.meals.unshift(saved)
+  result.value = previous || state.meals[0]
   addMeal()
   manualOpen.value = false
   manual.value = {
@@ -197,8 +304,9 @@ onBeforeUnmount(() => {
       <h1>好好吃，才能好好练<span class="green-dot">.</span></h1>
       <p>吃够蛋白，适度碳水，给每一次训练足够的支持。</p>
     </div>
-    <span class="pill green"><Icon name="leaf" :size="15" />每日目标 150–155g</span>
+    <span class="pill green"><Icon name="leaf" :size="15" />每日目标 {{ proteinTarget }}g</span>
   </div>
+  <FoodCatalog />
   <div class="nutrition-layout">
     <section class="panel protein-card">
       <div class="section-heading">
@@ -207,23 +315,59 @@ onBeforeUnmount(() => {
       </div>
       <div
         class="protein-ring"
-        :style="{ '--progress': Math.min(100, (proteinToday / 155) * 100) + '%' }"
+        :style="{ '--progress': Math.min(100, (proteinToday / proteinTarget) * 100) + '%' }"
       >
         <div>
           <strong>{{ proteinToday }}</strong
-          ><span>/ 155 g</span>
+          ><span>/ {{ proteinTarget }} g</span>
         </div>
       </div>
       <h3>
-        {{ proteinToday >= 150 ? '今日目标达成，恢复更有底气。' : '一点一点，吃够今天的目标。' }}
+        {{
+          proteinToday >= proteinTarget
+            ? '今日目标达成，恢复更有底气。'
+            : '一点一点，吃够今天的目标。'
+        }}
       </h3>
       <p>
         {{
-          proteinToday >= 150
+          proteinToday >= proteinTarget
             ? '坚持均衡饮食，明天继续。'
-            : '还差 ' + Math.max(0, 150 - proteinToday) + 'g 达到最低目标'
+            : '还差 ' + Math.max(0, proteinTarget - proteinToday) + 'g 达到最低目标'
         }}
       </p>
+      <form class="form-stack" @submit.prevent="saveTarget">
+        <label
+          >每日蛋白目标（g）<input
+            v-model.number="targetInput"
+            type="number"
+            min="1"
+            max="1000"
+            step="1"
+            required /></label
+        ><button class="btn" type="submit">保存蛋白目标</button>
+        <p class="tiny">
+          目标应用到个人总览；已有分日期目标时，从今天起更新蛋白。公共榜单和徽章仍按固定150g规则。
+        </p>
+      </form>
+      <details>
+        <summary>今日摄入来源</summary>
+        <p v-for="m in todayMeals.filter((m) => m.logged_to_protein)" :key="m.meal_id">
+          {{ m.title }}：{{ m.logged_grams ?? m.base_protein_g * m.portion }}g
+        </p>
+        <p>
+          手动调整与历史差额：{{
+            Number(
+              (
+                proteinToday -
+                todayMeals
+                  .filter((m) => m.logged_to_protein)
+                  .reduce((n, m) => n + (m.logged_grams ?? m.base_protein_g * m.portion), 0)
+              ).toFixed(1),
+            )
+          }}g
+        </p>
+      </details>
       <div class="quick-add">
         <button
           v-for="n in [10, 25, 40]"
@@ -324,12 +468,29 @@ onBeforeUnmount(() => {
           <span class="pill">{{
             result.source === 'manual'
               ? '手动记录'
-              : result.is_estimate
-                ? 'AI 估算结果'
-                : '演示结果'
+              : ['food-catalog', 'portion-estimate'].includes(result.source)
+                ? '食品目录估算'
+                : result.is_estimate
+                  ? 'AI 估算结果'
+                  : '演示结果'
           }}</span>
         </div>
-        <label class="row between"
+        <p
+          v-if="!['manual', 'food-catalog', 'portion-estimate'].includes(result.source)"
+          class="info-box"
+        >
+          识别结果是估值；服务未提供可验证的数值置信度。请核对并修正后再计入，未确认的识别草稿不会存入历史记录。
+        </p>
+        <label
+          >修正食物名称<input
+            v-model="result.title"
+            :disabled="result.logged_to_protein"
+            maxlength="128"
+        /></label>
+        <p v-if="['food-catalog', 'portion-estimate'].includes(result.source)">
+          食用重量 {{ Number((result.portion * 100).toFixed(2)) }}g · 以下营养基准为每100g
+        </p>
+        <label v-else class="row between"
           >份量<select v-model.number="result.portion" :disabled="result.logged_to_protein">
             <option :value="0.5">半份</option>
             <option :value="1">一份</option>
@@ -347,7 +508,15 @@ onBeforeUnmount(() => {
             ]"
             :key="key"
           >
-            <strong>{{ scaled(key) }}</strong
+            <label
+              >{{ label }}每份估值<input
+                v-model.number="result[key]"
+                type="number"
+                min="0"
+                step="0.1"
+                :disabled="result.logged_to_protein"
+            /></label>
+            <strong>{{ scaled(key) }}</strong>
             ><span>{{ label }} · {{ unit }}</span>
           </div>
         </div>
@@ -370,29 +539,45 @@ onBeforeUnmount(() => {
       <h2>饮食记录</h2>
       <div class="row">
         <span class="pill">{{ state.meals.length }} 条记录</span
-        ><button class="btn primary" @click="manualOpen = true">
+        ><button class="btn primary" @click="newMeal">
           <Icon name="plus" :size="16" />手动记录饮食
         </button>
       </div>
     </div>
+    <label>搜索饮食记录<input v-model="search" type="search" placeholder="按食物名称搜索" /></label>
+    <p v-if="state.meals.length && !filteredMeals.length" class="empty-state">
+      没有匹配的食物，试试其他关键词。
+    </p>
     <p v-if="!state.meals.length" class="empty-state">
       手动记下今天的一餐，从了解自己吃了什么开始。
     </p>
-    <div v-for="m in state.meals" :key="m.meal_id" class="history-row">
+    <div v-for="m in filteredMeals" :key="m.meal_id" class="history-row">
       <div>
         <strong>{{ m.title }}</strong>
         <p>
-          {{ mealDate(m) }} · {{ m.portion }} 份 · 蛋白
+          {{ mealDate(m) }} ·
+          {{
+            ['food-catalog', 'portion-estimate'].includes(m.source)
+              ? Number((m.portion * 100).toFixed(2)) + 'g'
+              : m.portion + ' 份'
+          }}
+          · {{ Number((m.base_kcal * m.portion).toFixed(1)) }} kcal · 蛋白
           {{ Math.round(m.base_protein_g * m.portion) }}g ·
           {{ m.logged_to_protein ? '已记入' : '未记入' }}
         </p>
       </div>
-      <div class="row">
+      <div class="row wrap">
+        <button class="btn small-btn" @click="editMeal(m)">编辑饮食</button>
+        <button class="btn small-btn" @click="saveMealTemplate(m)">保存常用餐食</button>
+        <button class="btn small-btn" @click="editMeal(m, true)">复制到今天</button>
         <button class="btn small-btn" @click="result = m">查看</button
         ><button v-if="m.logged_to_protein" class="text-link" @click="undo(m)">撤销计入</button>
       </div>
     </div>
   </section>
+  <FoodBatch :enabled="foodEnabled" @use="editMeal($event, true)" @manual="newMeal" />
+  <NutritionGoals />
+  <MealLibrary @use="editMeal($event, true)" />
   <Modal v-if="manualOpen" title="手动记录饮食" @close="manualOpen = false"
     ><form class="form-stack" @submit.prevent="saveManualMeal">
       <label

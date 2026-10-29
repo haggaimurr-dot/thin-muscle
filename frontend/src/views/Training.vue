@@ -1,8 +1,11 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import Icon from '../components/Icon.vue'
 import Modal from '../components/Modal.vue'
+import TrainingStats from '../components/TrainingStats.vue'
+import CustomPlan from '../components/CustomPlan.vue'
+import ExerciseLibrary from '../components/ExerciseLibrary.vue'
 import { api, demoMode } from '../api'
 import { preparePhoto, photoUrl, maxPhotos } from '../photos'
 import {
@@ -16,8 +19,11 @@ import {
   saveLog,
   notify,
   previousLog,
+  ymd,
+  monday,
 } from '../store'
 import { PHASES, WEEK_LABEL, VIDEO_LIB } from '../data'
+import { recordDate } from '../progress'
 const route = useRoute(),
   router = useRouter(),
   view = ref(route.query.view || 'today'),
@@ -29,6 +35,40 @@ const route = useRoute(),
   videoUrl = ref(''),
   deleteTarget = ref(null),
   playingBvid = ref('')
+const selectedWeek = ref(week),
+  previewPhase = ref('')
+const selectedDate = computed(() => {
+  const d = new Date(selectedWeek.value + 'T12:00:00')
+  d.setDate(d.getDate() + day.value - 1)
+  return ymd(d)
+})
+function selectDate(value) {
+  const date = new Date(value + 'T12:00:00')
+  if (Number.isNaN(date.getTime()) || ymd(date) !== value) return
+  selectedWeek.value = monday(date)
+  day.value = date.getDay() || 7
+}
+function shiftWeek(delta) {
+  const date = new Date(selectedDate.value + 'T12:00:00')
+  date.setDate(date.getDate() + delta * 7)
+  selectDate(ymd(date))
+}
+function returnToday() {
+  selectDate(ymd())
+  previewPhase.value = ''
+}
+function removePhoto(index) {
+  form.value.photos.splice(index, 1)
+  photoStates.value.splice(index, 1)
+}
+watch(
+  () => [route.query.date, route.query.session],
+  ([date, period]) => {
+    if (typeof date === 'string') selectDate(date)
+    if (['am', 'pm'].includes(period)) session.value = period
+  },
+  { immediate: true },
+)
 watch(
   () => route.query.view,
   (v) => {
@@ -36,21 +76,76 @@ watch(
   },
 )
 const form = ref({}),
-  plan = computed(() => getPlan(day.value)),
+  plan = computed(() =>
+    getPlan(day.value, selectedWeek.value, Number(previewPhase.value) || state.phase),
+  ),
   exercises = computed(() => plan.value[session.value])
+const photoStates = ref([])
+const customOpen = ref(false)
+const libraryOpen = ref(false),
+  customSeed = ref(null)
+function chooseLibrary(ex) {
+  customSeed.value = ex
+  libraryOpen.value = false
+  customOpen.value = true
+}
+function closeCustom() {
+  customOpen.value = false
+  customSeed.value = null
+}
+const photoUsage = ref(null),
+  photoUsageError = ref('')
+async function loadPhotoUsage() {
+  if (demoMode) return
+  try {
+    photoUsage.value = await api('/photos/usage')
+    photoUsageError.value = ''
+  } catch {
+    photoUsageError.value = '暂时无法读取图片空间，保存时将再次校验'
+  }
+}
 
-const history = computed(() =>
+const historyFrom = ref(''),
+  historyTo = ref(''),
+  historyAction = ref(''),
+  historyLimit = ref(20)
+watch([historyFrom, historyTo, historyAction], () => {
+  historyLimit.value = 20
+})
+const allHistory = computed(() =>
   Object.entries(state.logs)
+    .filter(([key]) => {
+      const match = key.match(/^(.+)\|([1-7])-(am|pm)$/)
+      const date = match && recordDate(match[1], match[2])
+      return (
+        date &&
+        (!historyFrom.value || date >= historyFrom.value) &&
+        (!historyTo.value || date <= historyTo.value)
+      )
+    })
+    .map(([key, entries]) => [
+      key,
+      entries.filter((e) =>
+        e.name?.toLowerCase().includes(historyAction.value.trim().toLowerCase()),
+      ),
+    ])
     .filter(([, entries]) => entries.length)
     .sort(([a], [b]) => b.localeCompare(a)),
 )
+const history = computed(() => allHistory.value.slice(0, historyLimit.value))
+function clearHistoryFilters() {
+  historyFrom.value = ''
+  historyTo.value = ''
+  historyAction.value = ''
+}
 function openLog(ex, entry = null, key = null) {
+  if (previewPhase.value && !entry) return
   const parts = key?.split('|')[1].split('-')
   edit.value = {
     day: parts ? Number(parts[0]) : day.value,
     session: parts ? parts[1] : session.value,
     id: entry?.id,
-    week: key?.split('|')[0] || week,
+    week: key?.split('|')[0] || selectedWeek.value,
   }
   form.value = {
     note: entry?.note || '',
@@ -61,6 +156,12 @@ function openLog(ex, entry = null, key = null) {
     reps: entry?.reps || '',
     rpe: entry?.rpe === '—' ? '' : entry?.rpe || 7,
   }
+  photoStates.value = form.value.photos.map((photo) => ({
+    status: photo.startsWith('data:') ? '待上传' : '已保存',
+    progress: 0,
+    error: '',
+  }))
+  loadPhotoUsage()
 }
 const saving = ref(false),
   preparing = ref(false),
@@ -74,35 +175,81 @@ async function addPhotos(event) {
   }
   preparing.value = true
   try {
-    for (const file of files) form.value.photos.push(await preparePhoto(file))
+    for (const file of files) {
+      try {
+        form.value.photos.push(await preparePhoto(file))
+        photoStates.value.push({ status: '待上传', progress: 0, error: '' })
+      } catch (error) {
+        notify(file.name + '：' + error.message)
+      }
+    }
   } catch (error) {
     notify(error.message)
   } finally {
     preparing.value = false
   }
 }
-async function submit() {
+async function uploadPhoto(index) {
+  const status = (photoStates.value[index] ??= { progress: 0, error: '' })
+  status.status = '上传中'
+  status.error = ''
+  try {
+    const blob = await (await fetch(form.value.photos[index])).blob()
+    const upload = new FormData()
+    upload.append('file', blob, 'training.jpg')
+    const photo = await api('/photos', upload, 'POST', undefined, (progress) => {
+      status.progress = progress
+    })
+    form.value.photos[index] = photo.id
+    status.status = '已上传'
+    status.progress = 100
+    await loadPhotoUsage()
+  } catch (error) {
+    status.status = '上传失败'
+    status.error = error.message
+    throw error
+  }
+}
+async function retryPhoto(index) {
+  if (saving.value || preparing.value) return
+  saving.value = true
+  try {
+    await uploadPhoto(index)
+  } catch (error) {
+    notify(error.message)
+  } finally {
+    saving.value = false
+  }
+}
+async function submit(continueEntry = false) {
   if (saving.value || preparing.value) return
   saving.value = true
   try {
     if (!demoMode)
       for (let i = 0; i < form.value.photos.length; i++) {
         if (form.value.photos[i].startsWith('data:')) {
-          const blob = await (await fetch(form.value.photos[i])).blob()
-          const upload = new FormData()
-          upload.append('file', blob, 'training.jpg')
-          const photo = await api('/photos', upload)
-          form.value.photos[i] = photo.id
+          await uploadPhoto(i)
         }
       }
-    saveLog(
+    const savedId = saveLog(
       edit.value.day,
       edit.value.session,
       { ...form.value, weight: form.value.weight || '自重', rpe: form.value.rpe || '—' },
       edit.value.id,
       edit.value.week,
     )
-    edit.value = null
+    if (continueEntry && !state.storageError) {
+      edit.value.id = undefined
+      form.value = { ...form.value, sets: '1', note: '', photos: [] }
+      photoStates.value = []
+      await nextTick()
+      document.querySelector('[data-log-weight]')?.focus()
+      notify('已保存；继续记录下一组。账号记录将自动同步。')
+    } else if (!state.storageError) edit.value = null
+    else {
+      edit.value.id = savedId
+      notify('本机存储失败，输入已保留，请释放空间并导出备份后重试')
+    }
   } catch (error) {
     notify(error.message)
   } finally {
@@ -110,7 +257,9 @@ async function submit() {
   }
 }
 function complete() {
-  for (const ex of exercises.value) toggleCheck(day.value, session.value, ex.name, true)
+  if (previewPhase.value) return
+  for (const ex of exercises.value)
+    toggleCheck(day.value, session.value, ex.name, true, selectedWeek.value)
   notify('本时段训练已完成')
 }
 function openVideo(name) {
@@ -138,16 +287,25 @@ function safeUrl(url) {
 function bvid(url) {
   try {
     const u = new URL(url)
-    if (!['www.bilibili.com', 'bilibili.com'].includes(u.hostname)) return ''
-    return u.pathname.match(/\/video\/(BV[A-Za-z0-9]+)/)?.[1] || ''
+    if (
+      !['https:', 'http:'].includes(u.protocol) ||
+      u.username ||
+      u.password ||
+      u.port ||
+      !['www.bilibili.com', 'bilibili.com'].includes(u.hostname)
+    )
+      return ''
+    return u.pathname.match(/^\/video\/(BV[A-Za-z0-9]{10})\/?$/)?.[1] || ''
   } catch {
     return ''
   }
 }
 function bindVideo() {
   const url = safeUrl(videoUrl.value)
-  if (!url) {
-    notify('请输入有效的 HTTP 或 HTTPS 链接')
+  if (!url || !bvid(url)) {
+    notify(
+      '请输入有效的 HTTP 或 HTTPS B站视频链接（bilibili.com/video/BV…）；短链接请先在浏览器展开',
+    )
     return
   }
   state.videos[video.value] = [{ title: videoTitle.value || video.value, url }]
@@ -191,43 +349,79 @@ function previous() {
       {{ label }}
     </button>
   </div>
+  <TrainingStats />
+  <button class="btn" @click="libraryOpen = true">内置动作库</button>
   <template v-if="view !== 'history'"
     ><section class="panel phase-panel">
       <div>
         <span class="eyebrow">4-WEEK PROGRAM</span>
-        <h2>{{ PHASES[state.phase]?.title }}</h2>
-        <p>{{ PHASES[state.phase]?.focus }}</p>
+        <h2>{{ PHASES[Number(previewPhase) || state.phase]?.title }}</h2>
+        <p>{{ PHASES[Number(previewPhase) || state.phase]?.focus }}</p>
       </div>
       <div class="phase-picker">
         <button
           v-for="n in 4"
           :key="n"
           :class="{ active: state.phase === n }"
+          :disabled="!!previewPhase"
           @click="state.phase = n"
         >
           W{{ n }}
         </button>
       </div>
     </section>
+    <section class="panel form-stack" aria-label="日期与计划预览">
+      <button class="btn" :disabled="!!previewPhase" @click="customOpen = true">
+        自定义当日计划
+      </button>
+      <div class="row wrap">
+        <button class="btn" @click="shiftWeek(-1)">上一周</button>
+        <label
+          >训练日期<input
+            type="date"
+            :value="selectedDate"
+            @change="selectDate($event.target.value)"
+        /></label>
+        <button class="btn" @click="shiftWeek(1)">下一周</button>
+        <button class="btn" @click="returnToday">回到今天</button>
+      </div>
+      <label
+        >只读阶段预览<select v-model="previewPhase">
+          <option value="">当前阶段（可记录）</option>
+          <option v-for="n in 4" :key="n" :value="String(n)">{{ PHASES[n].title }}</option>
+        </select></label
+      >
+      <p v-if="previewPhase" class="info-box">
+        正在只读预览，不能勾选或新增训练记录；退出预览后可记录。自定义周计划优先，不随预览改变。
+      </p>
+      <p class="tiny">
+        {{ selectedDate }} ·
+        {{ selectedWeek }} 起的一周。跨周沿用当前阶段，不自动推算或修改账号阶段。
+      </p>
+    </section>
     <div class="week-picker">
       <button
         v-for="n in 7"
         :key="n"
-        :class="{ active: day === n, done: state.done[week]?.[n] }"
+        :class="{ active: day === n, done: state.done[selectedWeek]?.[n] }"
         @click="day = n"
       >
         <span>周{{ WEEK_LABEL[n - 1] }}</span
-        ><strong>{{ getPlan(n).label }}</strong
-        ><span v-if="state.done[week]?.[n]" class="day-indicator">✓ 已完成</span
+        ><strong>{{ getPlan(n, selectedWeek, Number(previewPhase) || state.phase).label }}</strong
+        ><span v-if="state.done[selectedWeek]?.[n]" class="day-indicator">✓ 已完成</span
         ><span v-else class="day-indicator">{{
-          n === today ? '今天' : getPlan(n).type === 'rest' ? '轻松恢复' : '力量训练'
+          n === today && selectedWeek === week
+            ? '今天'
+            : getPlan(n, selectedWeek, Number(previewPhase) || state.phase).type === 'rest'
+              ? '轻松恢复'
+              : '力量训练'
         }}</span>
       </button>
     </div>
     <section v-if="view === 'week'" class="panel">
       <div class="section-heading">
         <h2>周{{ WEEK_LABEL[day - 1] }} · {{ plan.label }}</h2>
-        <span class="pill">{{ week }} 这一周</span>
+        <span class="pill">{{ selectedWeek }} 这一周</span>
       </div>
       <div class="two-col">
         <div v-for="s in ['am', 'pm']" :key="s">
@@ -236,8 +430,9 @@ function previous() {
             <label
               ><input
                 type="checkbox"
-                :checked="isChecked(day, s, ex.name)"
-                @change="toggleCheck(day, s, ex.name, $event.target.checked)"
+                :disabled="!!previewPhase"
+                :checked="isChecked(day, s, ex.name, selectedWeek)"
+                @change="toggleCheck(day, s, ex.name, $event.target.checked, selectedWeek)"
               />{{ ex.name }}</label
             ><span>{{ ex.sets }} × {{ ex.reps }}</span>
           </div>
@@ -263,14 +458,17 @@ function previous() {
           v-for="(ex, i) in exercises"
           :key="ex.name"
           class="exercise-row"
-          :class="{ completed: isChecked(day, session, ex.name) }"
+          :class="{ completed: isChecked(day, session, ex.name, selectedWeek) }"
         >
           <label class="exercise-check"
             ><input
               type="checkbox"
               :aria-label="'完成' + ex.name"
-              :checked="isChecked(day, session, ex.name)"
-              @change="toggleCheck(day, session, ex.name, $event.target.checked)" /></label
+              :disabled="!!previewPhase"
+              :checked="isChecked(day, session, ex.name, selectedWeek)"
+              @change="
+                toggleCheck(day, session, ex.name, $event.target.checked, selectedWeek)
+              " /></label
           ><span class="exercise-no">{{ String(i + 1).padStart(2, '0') }}</span>
           <div class="exercise-body">
             <h3>{{ ex.name }}</h3>
@@ -284,7 +482,7 @@ function previous() {
           <div class="exercise-actions">
             <button class="icon-btn" :aria-label="ex.name + '教学视频'" @click="openVideo(ex.name)">
               <Icon name="video" :size="18" /></button
-            ><button class="btn small-btn" @click="openLog(ex)">
+            ><button class="btn small-btn" :disabled="!!previewPhase" @click="openLog(ex)">
               <Icon name="plus" :size="15" />记录
             </button>
           </div>
@@ -292,9 +490,10 @@ function previous() {
       </div>
       <div class="row between wrap">
         <p class="muted">
-          本时段已记录 {{ (state.logs[sessionKey(day, session)] || []).length }} 条 · 勾选表示完成
+          本时段已记录 {{ (state.logs[sessionKey(day, session, selectedWeek)] || []).length }} 条 ·
+          勾选表示完成
         </p>
-        <button class="btn primary" @click="complete">
+        <button class="btn primary" :disabled="!!previewPhase" @click="complete">
           <Icon name="check" :size="17" />完成本时段
         </button>
       </div>
@@ -305,6 +504,15 @@ function previous() {
       <h2>训练足迹</h2>
       <span class="pill">{{ history.reduce((n, [, e]) => n + e.length, 0) }} 条记录</span>
     </div>
+    <div class="row wrap">
+      <label>开始日期<input v-model="historyFrom" type="date" /></label
+      ><label>结束日期<input v-model="historyTo" type="date" /></label
+      ><label>搜索训练动作<input v-model="historyAction" type="search" maxlength="128" /></label
+      ><button class="btn" @click="clearHistoryFilters">清空筛选</button>
+    </div>
+    <p v-if="historyFrom && historyTo && historyFrom > historyTo" class="alert">
+      开始日期不能晚于结束日期。
+    </p>
     <div v-if="!history.length" class="empty-state">
       <Icon name="training" :size="40" />
       <h3>从第一组开始</h3>
@@ -323,6 +531,9 @@ function previous() {
       <div v-for="entry in entries" :key="entry.id" class="history-row">
         <div class="record-content">
           <strong>{{ entry.name }}</strong>
+          <span v-if="entry.is_demo || ['ai', 'demo'].includes(entry.source)" class="pill orange"
+            >演示来源 · 非真实动作分析</span
+          >
           <p>
             {{ entry.weight }} kg / 自重 · {{ entry.sets }} 组 × {{ entry.reps }} · RPE
             {{ entry.rpe }}
@@ -358,6 +569,9 @@ function previous() {
         </div>
       </div>
     </article>
+    <button v-if="allHistory.length > historyLimit" class="btn full" @click="historyLimit += 20">
+      加载更多训练记录
+    </button>
   </section>
   <Modal
     v-if="edit"
@@ -368,9 +582,12 @@ function previous() {
       上次：{{ previous().weight }} · {{ previous().sets }} × {{ previous().reps }} · RPE
       {{ previous().rpe }}
     </div>
-    <form class="form-stack" @submit.prevent="submit">
+    <form class="form-stack" @submit.prevent="submit($event.submitter?.value === 'continue')">
       <label
-        >重量（kg；留空为自重）<input v-model="form.weight" placeholder="例如 16 或辅助"
+        >重量（kg；留空为自重）<input
+          data-log-weight
+          v-model="form.weight"
+          placeholder="例如 16 或辅助"
       /></label>
       <div class="two-col">
         <label>组数<input v-model="form.sets" required placeholder="3" /></label
@@ -408,11 +625,31 @@ function previous() {
               class="icon-btn"
               :disabled="saving || preparing"
               :aria-label="'移除图片 ' + (index + 1)"
-              @click="form.photos.splice(index, 1)"
+              @click="removePhoto(index)"
             >
               <Icon name="close" :size="15" />
             </button>
           </div>
+        </div>
+        <div v-for="(status, index) in photoStates" :key="index" class="tiny" aria-live="polite">
+          图片 {{ index + 1 }}：{{ demoMode ? '本机保存' : status.status }}
+          <progress
+            v-if="status.status === '上传中'"
+            :value="status.progress"
+            max="100"
+            :aria-label="'图片 ' + (index + 1) + ' 上传进度'"
+          ></progress>
+          <span v-if="status.status === '上传中'">{{ status.progress }}% · 等待服务器确认</span>
+          <span v-if="status.error" role="alert">{{ status.error }}</span>
+          <button
+            v-if="status.status === '上传失败'"
+            class="btn small-btn"
+            type="button"
+            :disabled="saving"
+            @click="retryPhoto(index)"
+          >
+            重试图片 {{ index + 1 }}
+          </button>
         </div>
         <label v-if="form.photos.length < 3" class="btn photo-picker"
           ><Icon name="upload" :size="16" />{{ preparing ? '正在压缩图片…' : '添加训练图片'
@@ -425,10 +662,22 @@ function previous() {
             @change="addPhotos"
         /></label>
         <p class="tiny">最多三张，每张不超过 8MB，保存前会压缩。支持相册选择或手机拍照。</p>
+        <p v-if="photoUsage" class="tiny">
+          账号图片空间：{{ (photoUsage.used_bytes / 1024 / 1024).toFixed(2) }} /
+          {{ photoUsage.limit_bytes / 1024 / 1024 }} MB
+        </p>
+        <p v-if="photoUsageError" class="tiny">{{ photoUsageError }}</p>
       </div>
       <button class="btn primary full" type="submit" :disabled="saving || preparing">
         {{ saving ? '正在保存…' : '保存记录' }}
       </button>
+      <button class="btn full" type="submit" value="continue" :disabled="saving || preparing">
+        保存并继续下一组
+      </button>
+      <p class="tiny">
+        连续录入保留动作、重量、次数与 RPE，下一条默认 1 组；Tab
+        切换字段。保存到本机后，账号同步状态见页面顶部。
+      </p>
     </form></Modal
   >
   <Modal v-if="video" :title="video + ' · 动作教学'" @close="video = null"
@@ -459,6 +708,9 @@ function previous() {
       referrerpolicy="no-referrer"
       allowfullscreen
     ></iframe>
+    <p v-if="playingBvid" class="info-box">
+      若播放器空白、视频失效或被限制，请使用上方原链接查看；也可在下方重新绑定视频。链接格式校验不能保证远端可播放。
+    </p>
     <p v-if="!videos.length" class="muted">还没有教学视频，可以绑定自己的链接。</p>
     <form class="form-stack" @submit.prevent="bindVideo">
       <label>视频标题<input v-model="videoTitle" placeholder="动作示范" /></label
@@ -477,4 +729,15 @@ function previous() {
       ><button class="btn destructive" @click="removeLog">确认删除</button>
     </div></Modal
   >
+  <Modal v-if="libraryOpen" title="内置动作库" @close="libraryOpen = false"
+    ><ExerciseLibrary :read-only="!!previewPhase" @use="chooseLibrary"
+  /></Modal>
+  <Modal v-if="customOpen" title="自定义训练计划" @close="closeCustom"
+    ><CustomPlan
+      :day="day"
+      :week="selectedWeek"
+      :seed="customSeed"
+      :session="session"
+      @close="closeCustom"
+  /></Modal>
 </template>

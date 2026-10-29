@@ -12,7 +12,11 @@ def get_current_user(request: Request, db: Session = Depends(get_db)) -> User:
             user = db.get(User, int(request.headers["X-User-Id"]))
         except ValueError:
             user = None
-        if user:
+        if user and not user.openid.startswith("deleted:"):
+            if request.method not in ("GET", "HEAD", "OPTIONS"):
+                from app.services.account_lock import lock_account
+
+                lock_account(user, db)
             return user
         raise HTTPException(401, "演示用户不存在")
     return current_user(request, db)

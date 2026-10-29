@@ -1,0 +1,16 @@
+import {test,expect} from '@playwright/test'
+test.skip(!!process.env.AUTH_E2E,'Seeded demo')
+test('user search, feed scope and notification empty state',async({page})=>{
+ await page.goto('/#/community')
+ await page.getByRole('button',{name:'发现伙伴',exact:true}).click()
+ await expect(page.locator('.person-card').first()).toBeVisible()
+ const name=await page.locator('.person-card').first().locator('h3').innerText()
+ await page.getByLabel('搜索公开昵称').fill(name)
+ await page.getByRole('button',{name:'搜索伙伴'}).click()
+ await expect(page.locator('.person-card').first()).toContainText(name)
+ await page.getByRole('button',{name:'关注动态',exact:true}).click()
+ await page.getByLabel('动态范围').selectOption('all')
+ await expect(page.locator('.feed-card').first()).toBeVisible()
+ await page.getByRole('button',{name:'消息通知',exact:true}).click()
+ await expect(page.getByRole('region',{name:'站内消息通知'})).toContainText('站内消息')
+})

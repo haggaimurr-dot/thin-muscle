@@ -5,7 +5,9 @@ from zoneinfo import ZoneInfo
 from app.models.account import BadgeAward
 
 CATALOG = json.loads(
-    (Path(__file__).resolve().parents[3] / "shared" / "badges.json").read_text()
+    (Path(__file__).resolve().parents[3] / "shared" / "badges.json").read_text(
+        encoding="utf-8"
+    )
 )
 
 

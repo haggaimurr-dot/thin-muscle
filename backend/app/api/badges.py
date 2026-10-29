@@ -1,4 +1,5 @@
 import json
+from datetime import UTC, datetime
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -27,6 +28,7 @@ def list_badges(user: User = Depends(current_user), db: Session = Depends(get_db
     }
     stats = metrics(data)
     return {
+        "updated_at": datetime.now(UTC).isoformat(),
         "items": [
             {**b, "current": stats[b["metric"]], "earned_at": awards.get(b["id"])}
             for b in CATALOG

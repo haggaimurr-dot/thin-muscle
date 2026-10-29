@@ -8,6 +8,7 @@
     "build": "vite build",
     "preview": "vite preview --host 0.0.0.0",
     "test:e2e": "playwright test",
+    "test:unit": "node --test unit/*.test.js",
     "format": "prettier --write src tests vite.config.js playwright.config.js",
     "format:check": "prettier --check src tests vite.config.js playwright.config.js"
   },

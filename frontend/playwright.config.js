@@ -12,14 +12,18 @@ export default defineConfig({
   use: {
     baseURL: 'http://127.0.0.1:5174',
     launchOptions: {
-      executablePath: process.env.CHROMIUM_PATH || '/usr/bin/chromium',
+      ...(process.env.CHROMIUM_PATH
+        ? { executablePath: process.env.CHROMIUM_PATH }
+        : process.platform === 'win32'
+          ? { channel: 'msedge' }
+          : { executablePath: '/usr/bin/chromium' }),
       args: ['--no-sandbox'],
     },
     screenshot: 'only-on-failure',
   },
   webServer: [
     {
-      command: '.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001',
+      command: `${process.platform === 'win32' ? '.venv\\Scripts\\python.exe' : '.venv/bin/python'} -m uvicorn app.main:app --host 127.0.0.1 --port 8001`,
       cwd: fileURLToPath(new URL('../backend', import.meta.url)),
       env: {
         DATABASE_URL: `sqlite:///${database}`,
@@ -32,7 +36,9 @@ export default defineConfig({
       reuseExistingServer: false,
     },
     {
-      command: 'npm run dev -- --port 5174 --strictPort',
+      command: process.env.PWA_E2E
+        ? 'npm run build && npm run preview -- --port 5174 --strictPort'
+        : 'npm run dev -- --port 5174 --strictPort',
       env: {
         API_PROXY_TARGET: 'http://127.0.0.1:8001',
         VITE_DEMO_MODE: process.env.AUTH_E2E ? 'false' : 'true',

@@ -6,12 +6,29 @@ import Modal from '../components/Modal.vue'
 import { api, demoMode } from '../api'
 import { state } from '../store'
 import { localBadges, nextBadge } from '../badges'
+import { badgeShareSvg } from '../badge-share'
+import ProgressTrends from '../components/ProgressTrends.vue'
 const remote = ref(null),
   loading = ref(false),
   error = ref(''),
   filter = ref('全部'),
   category = ref('全部'),
   selected = ref(null)
+const sharePreview = ref(null),
+  shareUrl = ref(''),
+  shareConsent = ref(false)
+function closeShare() {
+  URL.revokeObjectURL(shareUrl.value)
+  shareUrl.value = ''
+  sharePreview.value = null
+}
+function previewShare(badge) {
+  closeShare()
+  shareConsent.value = false
+  shareUrl.value = URL.createObjectURL(new Blob([badgeShareSvg(badge)], { type: 'image/svg+xml' }))
+  sharePreview.value = badge
+}
+onBeforeUnmount(closeShare)
 let controller
 async function load() {
   if (demoMode) return
@@ -38,6 +55,15 @@ onMounted(load)
 onBeforeUnmount(() => controller?.abort())
 const data = computed(() => (demoMode ? localBadges(state, state.demoBadgeAwards) : remote.value))
 const items = computed(() => data.value?.items || [])
+const lastUpdated = ref('')
+watch(
+  items,
+  () => {
+    lastUpdated.value = new Date().toISOString()
+    if (selected.value) selected.value = items.value.find((b) => b.id === selected.value.id) || null
+  },
+  { immediate: true },
+)
 const visible = computed(() =>
   items.value.filter(
     (b) =>
@@ -78,6 +104,10 @@ const link = (b) =>
   </div>
   <p v-if="loading && !data" class="loading-state">正在整理你的成长足迹…</p>
   <template v-if="data">
+    <p class="tiny">
+      进度更新时间：{{ new Date(data.updated_at || lastUpdated).toLocaleString('zh-CN') }} ·
+      {{ demoMode ? '本机演示计算' : '服务端计算' }}
+    </p>
     <section class="badges-summary">
       <div>
         <div class="eyebrow">YOUR BADGE COLLECTION</div>
@@ -184,12 +214,17 @@ const link = (b) =>
       150g 目标，不代表每个人都需要同样的摄入量。
     </div>
   </template>
+  <ProgressTrends />
   <Modal v-if="selected" :title="selected.title" @close="selected = null"
     ><div class="badge-detail">
       <BadgeMark :badge="selected" :locked="!selected.earned_at" /><span class="pill">{{
         selected.category
       }}</span>
       <p>{{ selected.description }}</p>
+      <p class="tiny">规则版本 1 · 重复日期不重复计入</p>
+      <button v-if="selected.earned_at" class="btn" @click="previewShare(selected)">
+        预览徽章分享卡
+      </button>
       <strong>{{
         selected.earned_at
           ? '已获得，值得为自己鼓掌'
@@ -200,4 +235,14 @@ const link = (b) =>
         }}<Icon name="arrow" :size="15"
       /></RouterLink></div
   ></Modal>
+  <Modal v-if="sharePreview" title="徽章分享卡预览" @close="closeShare">
+    <img :src="shareUrl" alt="徽章分享卡" style="width: 100%; height: auto" />
+    <p>
+      仅包含徽章名称、规则和分类，不包含昵称、体重、账号或训练明细。导出到本机后由你决定分享范围。
+    </p>
+    <label><input v-model="shareConsent" type="checkbox" />我已核对分享内容</label>
+    <a v-if="shareConsent" class="btn primary" :href="shareUrl" download="thin-muscle-badge.svg"
+      >下载徽章分享卡</a
+    >
+  </Modal>
 </template>

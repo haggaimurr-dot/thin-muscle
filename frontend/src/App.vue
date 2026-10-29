@@ -3,14 +3,33 @@ import { computed, ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import Icon from './components/Icon.vue'
 import Login from './components/Login.vue'
+import AccountSecurity from './components/AccountSecurity.vue'
+import AccountRecovery from './components/AccountRecovery.vue'
+import SyncMerge from './components/SyncMerge.vue'
 import { auth, initAuth, signOut } from './auth'
 import { demoMode } from './api'
-import { reloadCloud } from './store'
+import { reloadCloud, retrySync } from './store'
 import Modal from './components/Modal.vue'
 import BadgeMark from './components/BadgeMark.vue'
 import { state, exportData, parseBackup, restoreBackup, notify } from './store'
+import { backupSummary } from './store'
 onMounted(initAuth)
+onMounted(() => {
+  if (route.query.identity_bound === '1') {
+    securityOpen.value = true
+    notify('微信登录身份已绑定，请查看账号安全中的登录方式')
+  }
+})
 const cloudConfirm = ref(false)
+const mergeOpen = ref(false)
+const securityOpen = ref(false)
+function focusMain() {
+  document.getElementById('main-content')?.focus()
+}
+function openSecurity() {
+  securityOpen.value = true
+  menuOpen.value = false
+}
 async function logout() {
   try {
     await signOut()
@@ -69,6 +88,7 @@ function confirmRestore() {
 </script>
 <template>
   <div class="app-shell">
+    <a class="skip-link" href="#main-content" @click.prevent="focusMain">跳到主要内容</a>
     <aside class="sidebar" :class="{ open: menuOpen }">
       <RouterLink to="/" class="brand" @click="menuOpen = false"
         ><span class="brand-mark"><Icon name="training" :size="25" /></span
@@ -111,6 +131,9 @@ function confirmRestore() {
         <button v-if="auth.user" class="nav-link" @click="logout">
           <Icon name="logout" />退出登录
         </button>
+        <button v-if="auth.user && !demoMode" class="nav-link" @click="openSecurity">
+          账号安全
+        </button>
         <div class="profile">
           <span class="avatar">我</span>
           <div>
@@ -143,14 +166,20 @@ function confirmRestore() {
           ><span class="avatar small">我</span>
         </div>
       </header>
-      <main id="main-content">
+      <main id="main-content" tabindex="-1">
         <div v-if="state.storageError" class="alert">
           浏览器存储已满或不可用，当前修改暂未保存，请先导出记录。
         </div>
         <p v-if="!auth.ready" class="loading-state">正在检查登录状态…</p>
+        <AccountRecovery
+          v-else-if="!demoMode && route.query.account_action"
+          :key="String(route.fullPath)"
+        />
         <Login v-else-if="!demoMode && !auth.user" />
         <template v-else>
           <div v-if="!demoMode" class="sync-banner" role="status">
+            <span v-if="auth.offline">离线缓存，登录尚未验证</span>
+            <span v-if="!state.networkOnline">当前离线，未同步修改保留本机</span>
             <span>{{
               {
                 synced: '已同步到账号',
@@ -162,6 +191,29 @@ function confirmRestore() {
               }[state.syncStatus]
             }}</span>
             <span v-if="state.syncError">{{ state.syncError }}</span>
+            <span v-if="['error', 'conflict'].includes(state.syncStatus)"
+              >本机修改时间：{{ state.localUpdatedAt || '未知' }}；云端更新时间：{{
+                state.remoteUpdatedAt || '未知（旧记录或连接失败）'
+              }}</span
+            >
+            <label class="tiny"
+              ><input v-model="state.updateReminders" type="checkbox" />跨设备更新提醒</label
+            >
+            <button
+              v-if="state.syncStatus === 'conflict'"
+              class="text-link"
+              @click="mergeOpen = true"
+            >
+              预览合并两端记录
+            </button>
+            <button
+              v-if="state.syncStatus === 'error'"
+              class="text-link"
+              :disabled="!state.networkOnline"
+              @click="retrySync"
+            >
+              重试同步本机修改
+            </button>
             <button
               v-if="['error', 'conflict'].includes(state.syncStatus)"
               class="text-link"
@@ -221,12 +273,28 @@ function confirmRestore() {
       >
     </nav>
     <Modal v-if="backup" title="导入记录备份" @close="backup = null">
-      <p>导入会替换这个浏览器中已有的训练、饮食、计划和评估记录。建议先导出当前记录作为备份。</p>
+      <div class="info-box">
+        <p>版本：{{ backupSummary(backup).version }}</p>
+        <p>训练 {{ backupSummary(backup).logs }} 条；饮食 {{ backupSummary(backup).meals }} 条</p>
+        <p>日期范围：{{ backupSummary(backup).first }} 至 {{ backupSummary(backup).last }}</p>
+        <p>
+          图片引用 {{ backupSummary(backup).photos }} 张，其中内嵌
+          {{ backupSummary(backup).embedded }}
+          张。云端图片ID仅为引用，跨账号或已删除的图片不能靠JSON恢复。
+        </p>
+      </div>
+      <p>
+        导入会替换这个浏览器中已有的训练、饮食、计划、评估记录和个人周期目标。旧版备份未包含目标时会恢复默认目标。建议先导出当前记录作为备份。
+      </p>
       <div class="modal-actions">
         <button class="btn" @click="backup = null">取消</button
         ><button class="btn primary" @click="confirmRestore">确认替换并导入</button>
       </div>
     </Modal>
+    <Modal v-if="securityOpen && auth.user" title="账号安全" @close="securityOpen = false"
+      ><AccountSecurity @close="securityOpen = false"
+    /></Modal>
+    <SyncMerge v-if="mergeOpen" @close="mergeOpen = false" />
     <Modal v-if="cloudConfirm" title="重新加载云端记录？" @close="cloudConfirm = false"
       ><p>这会替换当前本机界面中的记录。请先导出本机备份，保留尚未同步的修改。</p>
       <div class="modal-actions">

@@ -36,3 +36,31 @@ const router = createRouter({
   scrollBehavior: () => ({ top: 0 }),
 })
 createApp(App).use(router).mount('#app')
+
+if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+  navigator.serviceWorker
+    .register('/sw.js')
+    .then((reg) => {
+      const announce = () => {
+        if (reg.waiting)
+          window.dispatchEvent(new CustomEvent('pwa-update', { detail: reg.waiting }))
+      }
+      announce()
+      reg.addEventListener('updatefound', () =>
+        reg.installing?.addEventListener('statechange', announce),
+      )
+    })
+    .catch(() => {})
+  let reloading = false
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (
+      navigator.serviceWorker.controller &&
+      !reloading &&
+      sessionStorage.getItem('tm_pwa_active')
+    ) {
+      reloading = true
+      location.reload()
+    }
+    sessionStorage.setItem('tm_pwa_active', '1')
+  })
+}

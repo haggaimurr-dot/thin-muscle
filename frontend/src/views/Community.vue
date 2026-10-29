@@ -1,6 +1,12 @@
 <script setup>
+import PublicProfile from '../components/PublicProfile.vue'
 import { ref, watch, onBeforeUnmount } from 'vue'
 import Icon from '../components/Icon.vue'
+import Modal from '../components/Modal.vue'
+import ReportForm from '../components/ReportForm.vue'
+import ModerationConsole from '../components/ModerationConsole.vue'
+import Notifications from '../components/Notifications.vue'
+import RankSettings from '../components/RankSettings.vue'
 import { api } from '../api'
 import { notify } from '../store'
 const tab = ref('feed'),
@@ -13,6 +19,29 @@ const tab = ref('feed'),
   people = ref([]),
   comments = ref({}),
   pending = ref(false)
+const pendingPath = ref('')
+const peopleQuery = ref(''),
+  feedScope = ref('following')
+const rankScope = ref('public')
+const postText = ref(''),
+  reportTarget = ref(null),
+  deletePost = ref(null)
+async function publishPost() {
+  if (await mutate('/home/posts', { text: postText.value })) postText.value = ''
+}
+async function confirmDelete() {
+  if (pending.value) return
+  pending.value = true
+  try {
+    await api('/home/feed/' + deletePost.value, undefined, 'DELETE')
+    deletePost.value = null
+    await load()
+  } catch (e) {
+    notify(e.message)
+  } finally {
+    pending.value = false
+  }
+}
 const dims = [
   ['strength', '力量完成', '%'],
   ['overload', '渐进超负荷', '个'],
@@ -21,6 +50,31 @@ const dims = [
   ['weight_class', '同体重进步', 'kg'],
 ]
 let controller
+const nextCursor = ref(null),
+  moreLoading = ref(false),
+  moreError = ref('')
+async function loadMore() {
+  if (moreLoading.value || !nextCursor.value) return
+  moreLoading.value = true
+  moreError.value = ''
+  const signal = controller?.signal
+  try {
+    const data = await api(
+      '/home/feed?before=' + nextCursor.value + '&scope=' + feedScope.value,
+      undefined,
+      'GET',
+      signal,
+    )
+    if (signal?.aborted) return
+    const ids = new Set(feed.value.map((p) => p.post_id))
+    feed.value.push(...data.items.filter((p) => !ids.has(p.post_id)))
+    nextCursor.value = data.next_cursor
+  } catch (e) {
+    if (e.name !== 'AbortError') moreError.value = e.message
+  } finally {
+    moreLoading.value = false
+  }
+}
 async function load() {
   controller?.abort()
   controller = new AbortController()
@@ -29,12 +83,18 @@ async function load() {
   error.value = ''
   try {
     const [r, f, p] = await Promise.all([
-      api(`/home/rank?period=${period.value}&dim=${dim.value}`, undefined, 'GET', signal),
-      api('/home/feed', undefined, 'GET', signal),
-      api('/home/discover', undefined, 'GET', signal),
+      api(
+        `/home/rank?period=${period.value}&dim=${dim.value}&scope=${rankScope.value}`,
+        undefined,
+        'GET',
+        signal,
+      ),
+      api('/home/feed?scope=' + feedScope.value, undefined, 'GET', signal),
+      api('/home/discover?q=' + encodeURIComponent(peopleQuery.value), undefined, 'GET', signal),
     ])
     ranking.value = r
     feed.value = f.items
+    nextCursor.value = f.next_cursor
     people.value = p.items
   } catch (e) {
     if (e.name !== 'AbortError') error.value = e.message
@@ -43,10 +103,13 @@ async function load() {
   }
 }
 watch([period, dim], load, { immediate: true })
+watch(feedScope, load)
+watch(rankScope, load)
 onBeforeUnmount(() => controller?.abort())
 async function mutate(path, body = {}) {
   if (pending.value) return
   pending.value = true
+  pendingPath.value = path
   try {
     await api(path, body)
     await load()
@@ -55,6 +118,7 @@ async function mutate(path, body = {}) {
     notify(e.message)
   } finally {
     pending.value = false
+    pendingPath.value = ''
   }
 }
 async function comment(post) {
@@ -81,6 +145,8 @@ async function comment(post) {
         ['feed', '关注动态'],
         ['rank', '训练排行榜'],
         ['people', '发现伙伴'],
+        ['profile', '我的公开资料'],
+        ['notifications', '消息通知'],
       ]"
       :key="id"
       :class="{ active: tab === id }"
@@ -89,6 +155,19 @@ async function comment(post) {
       {{ label }}
     </button>
   </div>
+  <ModerationConsole />
+  <PublicProfile v-if="tab === 'profile'" @saved="load" />
+  <Notifications v-if="tab === 'notifications'" />
+  <label v-if="tab === 'feed'"
+    >动态范围<select v-model="feedScope">
+      <option value="following">关注与本人</option>
+      <option value="all">全部公开动态</option>
+    </select></label
+  >
+  <form v-if="tab === 'people'" class="row wrap" @submit.prevent="load">
+    <label>搜索公开昵称<input v-model="peopleQuery" type="search" maxlength="64" /></label
+    ><button class="btn">搜索伙伴</button>
+  </form>
   <div v-if="error" class="alert">
     连接失败：{{ error }} <button class="text-link" @click="load">重试</button>
   </div>
@@ -96,6 +175,17 @@ async function comment(post) {
   <template v-if="!error"
     ><div v-if="tab === 'feed'" class="community-layout">
       <section>
+        <form class="panel form-stack" @submit.prevent="publishPost">
+          <label
+            >分享训练动态<textarea
+              v-model="postText"
+              required
+              maxlength="2000"
+              placeholder="记录今天的训练成果或心得"
+            /></label
+          ><button class="btn primary" :disabled="pending || !postText.trim()">发布动态</button>
+          <p class="tiny">当前支持文字动态，每日最多20条；请勿发布他人隐私或违规内容。</p>
+        </form>
         <div v-if="!feed.length && !loading" class="panel empty-state">
           <Icon name="community" :size="42" />
           <h3>关注伙伴，看见更多坚持</h3>
@@ -119,6 +209,12 @@ async function comment(post) {
             >
           </div>
           <div class="feed-actions">
+            <button class="text-link" @click="reportTarget = { kind: 'post', id: post.post_id }">
+              举报动态
+            </button>
+            <button v-if="post.can_delete" class="text-link" @click="deletePost = post.post_id">
+              删除本人动态
+            </button>
             <button
               class="text-link"
               :class="{ liked: post.liked_by_me }"
@@ -134,6 +230,9 @@ async function comment(post) {
           <div v-for="c in post.comments" :key="c.id" class="comment-row">
             <strong>{{ c.user }}</strong
             ><span>{{ c.text }}</span>
+            <button class="text-link" @click="reportTarget = { kind: 'feed_comment', id: c.id }">
+              举报留言
+            </button>
           </div>
           <form class="row comment-form" @submit.prevent="comment(post)">
             <input
@@ -145,6 +244,15 @@ async function comment(post) {
             /><button class="btn small-btn" :disabled="pending" type="submit">发送</button>
           </form>
         </article>
+        <p v-if="moreError" class="alert">{{ moreError }}</p>
+        <button
+          v-if="nextCursor"
+          class="btn full"
+          :disabled="moreLoading || loading || pending"
+          @click="loadMore"
+        >
+          {{ moreLoading ? '正在加载…' : moreError ? '重试加载更多' : '加载更多动态' }}
+        </button>
       </section>
       <aside class="panel community-aside">
         <div class="section-heading">
@@ -165,6 +273,13 @@ async function comment(post) {
       </aside>
     </div>
     <section v-if="tab === 'rank'" class="panel">
+      <RankSettings @updated="load" />
+      <label
+        >榜单范围<select v-model="rankScope">
+          <option value="public">公开榜</option>
+          <option value="friends">好友榜（互相关注）</option>
+        </select></label
+      >
       <div class="section-heading">
         <div>
           <h2>每一种坚持，都值得被看见</h2>
@@ -186,6 +301,13 @@ async function comment(post) {
           {{ label }}
         </button>
       </div>
+      <details class="info-box">
+        <summary>榜单计算规则</summary>
+        <p>统计周期：{{ ranking?.period_rule }}</p>
+        <p v-for="[id, label] in dims" :key="id">{{ label }}：{{ ranking?.rules?.[id] }}</p>
+        <p>{{ ranking?.tie_rule }}</p>
+        <p>计算时间：{{ ranking?.calculated_at }}；比较快照（UTC）：{{ ranking?.snapshot_hour }}</p>
+      </details>
       <div v-if="ranking?.me" class="info-box row between">
         <span>我的位置 · {{ ranking.me.rank_label }}</span
         ><strong>{{ ranking.me.score }}{{ dims.find((d) => d[0] === dim)?.[2] }}</strong>
@@ -213,20 +335,45 @@ async function comment(post) {
     </section>
     <section v-if="tab === 'people'" class="people-grid">
       <article v-for="u in people" :key="u.user_id" class="panel person-card">
-        <span class="avatar large">{{ u.name?.slice(0, 1) }}</span>
+        <img
+          v-if="u.avatar_url"
+          class="avatar large"
+          :src="u.avatar_url"
+          alt="公开头像"
+          referrerpolicy="no-referrer"
+        /><span v-else class="avatar large">{{ u.name?.slice(0, 1) }}</span>
         <h3>{{ u.name }}</h3>
+        <p v-if="u.bio">{{ u.bio }}</p>
         <p>{{ u.body_band }} · 训练伙伴</p>
         <button
           class="btn full"
           :class="{ primary: !u.following }"
           :disabled="pending"
+          :aria-busy="pendingPath === `/home/follows/${u.user_id}`"
           @click="mutate(`/home/follows/${u.user_id}`)"
         >
           <Icon :name="u.following ? 'check' : 'plus'" :size="16" />{{
-            u.following ? '已关注 · 取消' : '关注伙伴'
+            pendingPath === `/home/follows/${u.user_id}`
+              ? '正在更新…'
+              : u.following
+                ? '已关注 · 取消'
+                : '关注伙伴'
           }}
         </button>
       </article>
     </section></template
+  >
+  <Modal v-if="reportTarget" title="举报内容" @close="reportTarget = null"
+    ><ReportForm
+      :kind="reportTarget.kind"
+      :target-id="reportTarget.id"
+      @close="reportTarget = null"
+  /></Modal>
+  <Modal v-if="deletePost" title="删除本人动态" @close="deletePost = null"
+    ><p>动态及其留言、点赞将删除，不能恢复。</p>
+    <button class="btn" @click="deletePost = null">取消删除动态</button
+    ><button class="btn destructive" :disabled="pending" @click="confirmDelete">
+      确认删除动态
+    </button></Modal
   >
 </template>

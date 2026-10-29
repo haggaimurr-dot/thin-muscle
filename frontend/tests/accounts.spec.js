@@ -23,6 +23,8 @@ test('register, sync across devices, detect conflicts, logout and isolate accoun
   await expect(mobile.locator('.sync-banner')).toContainText('已同步到账号')
   await page.getByRole('button', { name: '+10g', exact: true }).click()
   await expect(page.locator('.sync-banner')).toContainText('版本冲突')
+  await expect(page.locator('.sync-banner')).toContainText('本机修改时间')
+  await expect(page.locator('.sync-banner')).toContainText('云端更新时间')
   await page.getByRole('button', { name: '重新加载云端', exact: true }).click()
   await page.getByRole('button', { name: '确认加载云端', exact: true }).click()
   await expect(page.locator('.protein-ring strong')).toHaveText('50')

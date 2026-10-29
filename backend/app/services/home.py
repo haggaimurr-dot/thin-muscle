@@ -1,5 +1,10 @@
 import json
 from collections import Counter
+from app.services.notifications import add_notification
+from app.models.account import RankPrivacy
+from sqlalchemy import or_
+from app.services.moderation import hidden_clause
+from app.models.moderation import ReviewState
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -7,7 +12,14 @@ from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
 from app.models.entities import User
-from app.models.home import FeedComment, FeedLike, FeedPost, Follow, RankSnapshot, WeekStat
+from app.models.home import (
+    FeedComment,
+    FeedLike,
+    FeedPost,
+    Follow,
+    RankSnapshot,
+    WeekStat,
+)
 
 
 def monday_ymd(d: datetime | None = None) -> str:
@@ -15,6 +27,20 @@ def monday_ymd(d: datetime | None = None) -> str:
     day = d.weekday()  # Mon=0
     m = d - timedelta(days=day)
     return m.strftime("%Y-%m-%d")
+
+
+def public_profile(db, user):
+    from app.models.profile import PublicProfile
+
+    profile = db.get(PublicProfile, user.id)
+    pref = db.get(RankPrivacy, user.id)
+    visible = not pref or pref.show_weight
+    return {
+        "avatar_url": user.avatar_url if profile and profile.show_avatar else "",
+        "bio": profile.bio if profile and profile.show_bio else "",
+        "body_kg": user.body_kg if visible else None,
+        "body_band": body_band(user.body_kg) if visible else "未公开",
+    }
 
 
 def body_band(kg: float | None) -> str:
@@ -69,7 +95,11 @@ def aggregate_period(db: Session, user: User, period: str, week_id: str) -> dict
         for _ in range(4):
             weeks.append(cur.strftime("%Y-%m-%d"))
             cur -= timedelta(days=7)
-        stats = db.query(WeekStat).filter(WeekStat.user_id == user.id, WeekStat.week_id.in_(weeks)).all()
+        stats = (
+            db.query(WeekStat)
+            .filter(WeekStat.user_id == user.id, WeekStat.week_id.in_(weeks))
+            .all()
+        )
         if not stats:
             return {
                 "strength_rate": 0,
@@ -92,7 +122,11 @@ def aggregate_period(db: Session, user: User, period: str, week_id: str) -> dict
             "strength_total": total,
         }
 
-    stat = db.query(WeekStat).filter(WeekStat.user_id == user.id, WeekStat.week_id == week_id).first()
+    stat = (
+        db.query(WeekStat)
+        .filter(WeekStat.user_id == user.id, WeekStat.week_id == week_id)
+        .first()
+    )
     if not stat:
         return {
             "strength_rate": 0,
@@ -154,12 +188,21 @@ def prev_hour_bucket(bucket: str) -> str:
     return dt.strftime("%Y-%m-%dT%H")
 
 
-def _build_ranked_rows(db: Session, dim: str, period: str, band_filter: str | None = None) -> list[dict]:
+def _build_ranked_rows(
+    db: Session, dim: str, period: str, band_filter: str | None = None, allowed_ids=None
+) -> list[dict]:
     """band_filter: weight_class 时按体重区间过滤；None 表示全员（总榜）。"""
     week_id = monday_ymd()
-    users = db.query(User).all()
+    users = db.query(User).filter(~User.openid.startswith("deleted:")).all()
     rows = []
     for u in users:
+        privacy = db.get(RankPrivacy, u.id)
+        if (allowed_ids is not None and u.id not in allowed_ids) or (
+            privacy and not privacy.participate
+        ):
+            continue
+        if dim == "weight_class" and privacy and not privacy.show_weight:
+            continue
         if dim == "weight_class":
             band = body_band(u.body_kg)
             if band_filter and band != band_filter:
@@ -168,10 +211,8 @@ def _build_ranked_rows(db: Session, dim: str, period: str, band_filter: str | No
         rows.append(
             {
                 "user_id": u.id,
-                "openid": u.openid,
-                "name": u.nickname or u.openid,
-                "body_kg": u.body_kg,
-                "body_band": body_band(u.body_kg),
+                "name": u.nickname or "训练伙伴",
+                **public_profile(db, u),
                 "score": score_for(dim, agg),
             }
         )
@@ -197,7 +238,10 @@ def _build_ranked_rows(db: Session, dim: str, period: str, band_filter: str | No
 
 
 def snapshot_exists(db: Session, bucket: str) -> bool:
-    return db.query(RankSnapshot).filter(RankSnapshot.hour_bucket == bucket).first() is not None
+    return (
+        db.query(RankSnapshot).filter(RankSnapshot.hour_bucket == bucket).first()
+        is not None
+    )
 
 
 def write_hourly_snapshots(db: Session, bucket: str | None = None) -> str:
@@ -242,18 +286,15 @@ def write_hourly_snapshots(db: Session, bucket: str | None = None) -> str:
 
 
 def ensure_hourly_snapshots(db: Session) -> str:
-    """确保当前小时有快照；若无上一小时则补一版演示用「上一小时」快照（名次略扰动）。"""
-    cur = hour_bucket()
-    prev = prev_hour_bucket(cur)
-    if not snapshot_exists(db, prev):
-        # 先写上一小时（基于当前数据），再轻微打乱名次感：复制后对部分用户 rank+1/-1 不方便
-        # 简化：写完当前逻辑相同的 prev，再写 cur；演示种子在 seed 里扰动
-        write_hourly_snapshots(db, prev)
-    write_hourly_snapshots(db, cur)
-    return cur
+    """Only record a current snapshot; do not invent missing historical data."""
+    current = hour_bucket()
+    write_hourly_snapshots(db, current)
+    return current
 
 
-def _prev_ranks_map(db: Session, period: str, dim: str, body_band_key: str, prev_bucket: str) -> dict[int, int]:
+def _prev_ranks_map(
+    db: Session, period: str, dim: str, body_band_key: str, prev_bucket: str
+) -> dict[int, int]:
     rows = (
         db.query(RankSnapshot)
         .filter(
@@ -294,29 +335,57 @@ def rank(
     dim: str,
     period: str = "week",
     limit: int = 50,
+    scope: str = "public",
 ) -> dict:
     cur_bucket = ensure_hourly_snapshots(db)
     prev_bucket = prev_hour_bucket(cur_bucket)
 
     band_key = body_band(me.body_kg) if dim == "weight_class" else ""
     band_filter = body_band(me.body_kg) if dim == "weight_class" else None
-    ranked = _build_ranked_rows(db, dim, period, band_filter=band_filter)
+    allowed_ids = None
+    if scope == "friends":
+        outgoing = {
+            r.followee_id for r in db.query(Follow).filter_by(follower_id=me.id)
+        }
+        incoming = {
+            r.follower_id for r in db.query(Follow).filter_by(followee_id=me.id)
+        }
+        allowed_ids = (outgoing & incoming) | {me.id}
+    ranked = _build_ranked_rows(
+        db, dim, period, band_filter=band_filter, allowed_ids=allowed_ids
+    )
     for r in ranked:
         r["is_me"] = r["user_id"] == me.id
 
     prev_map = _prev_ranks_map(db, period, dim, band_key, prev_bucket)
+    if scope == "friends":
+        prev_map = {}
     ranked = _attach_delta(ranked, prev_map)
 
     mine = next((r for r in ranked if r["is_me"]), None)
     board_kind = "小榜" if dim == "weight_class" else "总榜"
     return {
         "dim": dim,
+        "rules": {
+            "strength": "已存在周汇总的完成力量日之和÷目标力量日之和×100%，缺少整周汇总时不加入分母；周目标默认3天。",
+            "overload": "周期内每周相对上周同名动作增加重量，或相同重量增加次数的动作数量之和。",
+            "protein": "周期内每周每天蛋白累计至少150g的天数之和；个人目标不改变公共榜单。",
+            "streak": "从当前自然周向前连续有效周数，每周完成力量日占目标至少2/3；缺周或不达标中断。",
+            "weight_class": "同体重分组内，进步动作的重量正增量（kg）之和；同重量增加次数不增加kg分数。",
+        },
+        "period_rule": "当前周及之前3个自然周（非自然月）"
+        if period == "month"
+        else "当前自然周，周一开始（服务端UTC）",
+        "tie_rule": "分数相同并列，随后名次跳过并列人数（1、1、3）；同分按昵称排序。",
+        "calculated_at": datetime.utcnow().isoformat() + "Z",
         "period": period,
         "board_kind": board_kind,
         "body_band": body_band(me.body_kg) if dim == "weight_class" else None,
         "snapshot_hour": cur_bucket,
         "prev_snapshot_hour": prev_bucket,
-        "compare_hint": "较上一小时",
+        "compare_hint": ("较上一小时" if prev_map else "暂无上一小时实际快照")
+        if scope == "public"
+        else "好友为互相关注；暂无好友榜历史对比",
         "top3": ranked[:3],
         "me": mine,
         "full": ranked[:limit],
@@ -340,24 +409,33 @@ def list_following(db: Session, me: User) -> list[dict]:
         .all()
     )
     return [
-        {"user_id": u.id, "openid": u.openid, "name": u.nickname, "body_kg": u.body_kg, "body_band": body_band(u.body_kg)}
+        {
+            "user_id": u.id,
+            "name": u.nickname,
+            **public_profile(db, u),
+        }
         for _, u in rows
     ]
 
 
-def discover_users(db: Session, me: User) -> list[dict]:
-    following_ids = {f.followee_id for f in db.query(Follow).filter(Follow.follower_id == me.id)}
-    users = db.query(User).filter(User.id != me.id).all()
+def discover_users(db: Session, me: User, query: str = "") -> list[dict]:
+    following_ids = {
+        f.followee_id for f in db.query(Follow).filter(Follow.follower_id == me.id)
+    }
+    users = (
+        db.query(User)
+        .filter(User.id != me.id, ~User.openid.startswith("deleted:"))
+        .all()
+    )
     return [
         {
             "user_id": u.id,
-            "openid": u.openid,
             "name": u.nickname,
-            "body_kg": u.body_kg,
-            "body_band": body_band(u.body_kg),
+            **public_profile(db, u),
             "following": u.id in following_ids,
         }
         for u in users
+        if query.strip().casefold() in u.nickname.casefold()
     ]
 
 
@@ -365,6 +443,8 @@ def toggle_follow(db: Session, me: User, followee_id: int) -> dict:
     if followee_id == me.id:
         raise HTTPException(400, "不能关注自己")
     target = db.get(User, followee_id)
+    if target and target.openid.startswith("deleted:"):
+        raise HTTPException(status_code=404, detail="用户不存在")
     if not target:
         raise HTTPException(404, "用户不存在")
     row = (
@@ -377,23 +457,33 @@ def toggle_follow(db: Session, me: User, followee_id: int) -> dict:
         db.commit()
         return {"following": False, "user_id": followee_id}
     db.add(Follow(follower_id=me.id, followee_id=followee_id))
+    add_notification(
+        db, followee_id, me.id, "follow", "user", me.id, f"follow:{me.id}:{followee_id}"
+    )
     db.commit()
     return {"following": True, "user_id": followee_id}
 
 
-def feed(db: Session, me: User) -> dict:
-    following_ids = [f.followee_id for f in db.query(Follow).filter(Follow.follower_id == me.id)]
-    if not following_ids:
-        return {"items": [], "live_rail": [], "empty": True, "empty_hint": "去发现"}
-
+def feed(db: Session, me: User, before=None, limit=20, scope="following") -> dict:
+    following_ids = [
+        f.followee_id for f in db.query(Follow).filter(Follow.follower_id == me.id)
+    ]
     posts = (
         db.query(FeedPost, User)
         .join(User, FeedPost.user_id == User.id)
-        .filter(FeedPost.user_id.in_(following_ids))
-        .order_by(FeedPost.created_at.desc())
-        .limit(50)
+        .filter(
+            True
+            if scope == "all"
+            else or_(FeedPost.user_id.in_(following_ids), FeedPost.user_id == me.id)
+        )
+        .filter(~hidden_clause(db, "post", FeedPost.id))
+        .filter(FeedPost.id < before if before is not None else True)
+        .order_by(FeedPost.id.desc())
+        .limit(limit + 1)
         .all()
     )
+    has_more = len(posts) > limit
+    posts = posts[:limit]
     items = []
     live = []
     for post, u in posts:
@@ -407,32 +497,51 @@ def feed(db: Session, me: User) -> dict:
             db.query(FeedComment, User)
             .join(User, FeedComment.user_id == User.id)
             .filter(FeedComment.post_id == post.id)
+            .filter(~hidden_clause(db, "feed_comment", FeedComment.id))
             .order_by(FeedComment.created_at.asc())
             .all()
         )
-        c_out = [{"id": c.id, "user": cu.nickname, "text": c.text, "created_at": c.created_at} for c, cu in comments]
+        c_out = [
+            {
+                "id": c.id,
+                "user": cu.nickname,
+                "text": c.text,
+                "created_at": c.created_at,
+            }
+            for c, cu in comments
+        ]
         for c in c_out[-3:]:
             live.append({"user": c["user"], "text": c["text"], "post_id": post.id})
         items.append(
             {
                 "post_id": post.id,
                 "user_id": u.id,
+                "can_delete": u.id == me.id,
                 "user": u.nickname,
-                "openid": u.openid,
                 "gains": json.loads(post.gains_json or "[]"),
                 "likes": post.likes_count,
                 "liked_by_me": liked,
                 "comments": c_out,
             }
         )
-    return {"items": items, "live_rail": live[:40], "empty": False}
+    return {
+        "items": items,
+        "live_rail": live[:40],
+        "empty": not items,
+        "next_cursor": posts[-1][0].id if has_more else None,
+    }
 
 
 def toggle_feed_like(db: Session, me: User, post_id: int) -> dict:
     post = db.get(FeedPost, post_id)
-    if not post:
+    hidden = db.get(ReviewState, ("post", post_id))
+    if not post or (hidden and hidden.hidden):
         raise HTTPException(404, "动态不存在")
-    row = db.query(FeedLike).filter(FeedLike.post_id == post_id, FeedLike.user_id == me.id).first()
+    row = (
+        db.query(FeedLike)
+        .filter(FeedLike.post_id == post_id, FeedLike.user_id == me.id)
+        .first()
+    )
     if row:
         db.delete(row)
         post.likes_count = max(0, post.likes_count - 1)
@@ -441,16 +550,30 @@ def toggle_feed_like(db: Session, me: User, post_id: int) -> dict:
         db.add(FeedLike(post_id=post_id, user_id=me.id))
         post.likes_count += 1
         liked = True
+        add_notification(
+            db,
+            post.user_id,
+            me.id,
+            "feed_like",
+            "post",
+            post_id,
+            f"feed_like:{me.id}:{post_id}",
+        )
     db.commit()
     return {"liked": liked, "likes": post.likes_count}
 
 
 def add_feed_comment(db: Session, me: User, post_id: int, text: str) -> dict:
     post = db.get(FeedPost, post_id)
-    if not post:
+    hidden = db.get(ReviewState, ("post", post_id))
+    if not post or (hidden and hidden.hidden):
         raise HTTPException(404, "动态不存在")
     c = FeedComment(post_id=post_id, user_id=me.id, text=text.strip())
     db.add(c)
+    db.flush()
+    add_notification(
+        db, post.user_id, me.id, "feed_comment", "post", post_id, f"feed_comment:{c.id}"
+    )
     db.commit()
     db.refresh(c)
     return {

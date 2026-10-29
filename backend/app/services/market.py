@@ -3,8 +3,11 @@ from typing import Any, Optional
 
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
+from sqlalchemy import or_
 
 from app.core.config import settings
+from app.services.notifications import add_notification
+from app.services.moderation import hidden_clause
 from app.models.entities import (
     AssembledPlan,
     MarketComment,
@@ -42,7 +45,9 @@ def listing_payload(listing: MarketListing) -> dict:
         "media": _loads(listing.media_json, []),
         "body_text": listing.body_text,
         "likes": listing.likes_count,
-        "created_at": listing.created_at.isoformat() + "Z" if listing.created_at else None,
+        "created_at": listing.created_at.isoformat() + "Z"
+        if listing.created_at
+        else None,
     }
     if listing.kind == "plan":
         base.update(
@@ -71,13 +76,15 @@ def listing_payload(listing: MarketListing) -> dict:
 def _badge(listing: MarketListing) -> str:
     if listing.kind == "lesson":
         return "教学"
-    label = {"week": "整周", "month": "整月", "full": "全程"}.get(listing.cycle or "", "方案")
+    label = {"week": "整周", "month": "整月", "full": "全程"}.get(
+        listing.cycle or "", "方案"
+    )
     if listing.week_index:
         return f"{label} · 第 {listing.week_index} 周"
     return label
 
 
-def create_listing(db: Session, seller: User, body: ListingCreate) -> MarketListing:
+def build_listing(seller: User, body: ListingCreate) -> MarketListing:
     listing = MarketListing(
         seller_id=seller.id,
         kind=body.kind,
@@ -90,7 +97,9 @@ def create_listing(db: Session, seller: User, body: ListingCreate) -> MarketList
         body_text=body.body_text,
         cycle=body.cycle if body.kind == "plan" else None,
         week_index=body.week_index if body.kind == "plan" else None,
-        days_json=json.dumps([d.model_dump() for d in (body.days or [])], ensure_ascii=False)
+        days_json=json.dumps(
+            [d.model_dump() for d in (body.days or [])], ensure_ascii=False
+        )
         if body.kind == "plan"
         else None,
         rhythm=body.rhythm if body.kind == "plan" else "",
@@ -98,10 +107,64 @@ def create_listing(db: Session, seller: User, body: ListingCreate) -> MarketList
         skill_tags_json=json.dumps(body.skill_tags, ensure_ascii=False),
         steps_json=json.dumps(body.steps, ensure_ascii=False),
         cues_json=json.dumps(body.cues, ensure_ascii=False),
-        demo_media_json=json.dumps([m.model_dump() for m in body.demo_media], ensure_ascii=False),
+        demo_media_json=json.dumps(
+            [m.model_dump() for m in body.demo_media], ensure_ascii=False
+        ),
         status="listed",
     )
+    return listing
+
+
+CONTENT_FIELDS = (
+    "title",
+    "level",
+    "body_range",
+    "price_fen",
+    "cover_url",
+    "media_json",
+    "body_text",
+    "cycle",
+    "week_index",
+    "days_json",
+    "rhythm",
+    "topic",
+    "skill_tags_json",
+    "steps_json",
+    "cues_json",
+    "demo_media_json",
+)
+
+
+def current_work_version(db, listing_id):
+    from app.models.work_versions import WorkVersion
+    from sqlalchemy import func
+
+    return (
+        db.query(func.max(WorkVersion.version))
+        .filter_by(listing_id=listing_id)
+        .scalar()
+        or 1
+    )
+
+
+def capture_work_version(db, listing, version):
+    from app.models.work_versions import WorkVersion
+
+    db.add(
+        WorkVersion(
+            listing_id=listing.id,
+            version=version,
+            payload=json.dumps(listing_payload(listing), ensure_ascii=False),
+        )
+    )
+    db.flush()
+
+
+def create_listing(db: Session, seller: User, body: ListingCreate) -> MarketListing:
+    listing = build_listing(seller, body)
     db.add(listing)
+    db.flush()
+    capture_work_version(db, listing, 1)
     db.commit()
     db.refresh(listing)
     return listing
@@ -112,11 +175,16 @@ def list_listings(
     kind: Optional[str] = None,
     cycle: Optional[str] = None,
     level: Optional[str] = None,
+    query: str = "",
+    sort: str = "newest",
+    cursor=None,
+    limit=20,
 ) -> list[tuple[MarketListing, User]]:
     q = (
         db.query(MarketListing, User)
         .join(User, MarketListing.seller_id == User.id)
         .filter(MarketListing.status == "listed")
+        .filter(~hidden_clause(db, "market", MarketListing.id))
     )
     if kind and kind != "all":
         q = q.filter(MarketListing.kind == kind)
@@ -124,7 +192,38 @@ def list_listings(
         q = q.filter(MarketListing.cycle == cycle)
     if level and level != "all":
         q = q.filter(MarketListing.level == level)
-    return q.order_by(MarketListing.created_at.desc()).all()
+    if query.strip():
+        q = q.filter(
+            or_(
+                MarketListing.title.contains(query.strip(), autoescape=True),
+                MarketListing.body_text.contains(query.strip(), autoescape=True),
+                User.nickname.contains(query.strip(), autoescape=True),
+            )
+        )
+    column = {
+        "newest": MarketListing.created_at,
+        "price_asc": MarketListing.price_fen,
+        "price_desc": MarketListing.price_fen,
+        "popular": MarketListing.likes_count,
+    }[sort]
+    if cursor:
+        from sqlalchemy import and_
+
+        value, row_id = cursor
+        q = q.filter(
+            or_(
+                column > value if sort == "price_asc" else column < value,
+                and_(column == value, MarketListing.id < row_id),
+            )
+        )
+    return (
+        q.order_by(
+            column.asc() if sort == "price_asc" else column.desc(),
+            MarketListing.id.desc(),
+        )
+        .limit(limit + 1)
+        .all()
+    )
 
 
 def get_listing(db: Session, listing_id: int) -> tuple[MarketListing, User]:
@@ -132,6 +231,7 @@ def get_listing(db: Session, listing_id: int) -> tuple[MarketListing, User]:
         db.query(MarketListing, User)
         .join(User, MarketListing.seller_id == User.id)
         .filter(MarketListing.id == listing_id)
+        .filter(~hidden_clause(db, "market", MarketListing.id))
         .first()
     )
     if not row:
@@ -153,13 +253,34 @@ def toggle_like(db: Session, listing: MarketListing, user: User) -> bool:
         db.add(MarketLike(listing_id=listing.id, user_id=user.id))
         listing.likes_count += 1
         liked = True
+        add_notification(
+            db,
+            listing.seller_id,
+            user.id,
+            "market_like",
+            "market",
+            listing.id,
+            f"market_like:{user.id}:{listing.id}",
+        )
     db.commit()
     return liked
 
 
-def add_comment(db: Session, listing: MarketListing, user: User, text: str) -> MarketComment:
+def add_comment(
+    db: Session, listing: MarketListing, user: User, text: str
+) -> MarketComment:
     c = MarketComment(listing_id=listing.id, user_id=user.id, text=text.strip())
     db.add(c)
+    db.flush()
+    add_notification(
+        db,
+        listing.seller_id,
+        user.id,
+        "market_comment",
+        "market",
+        listing.id,
+        f"market_comment:{c.id}",
+    )
     db.commit()
     db.refresh(c)
     return c
@@ -193,7 +314,11 @@ def purchase(
 
     exists = (
         db.query(Purchase)
-        .filter(Purchase.buyer_id == buyer.id, Purchase.listing_id == listing.id, Purchase.status == "paid")
+        .filter(
+            Purchase.buyer_id == buyer.id,
+            Purchase.listing_id == listing.id,
+            Purchase.status == "paid",
+        )
         .first()
     )
     if exists:
@@ -201,6 +326,7 @@ def purchase(
 
     platform, creator = fee_split_fen(listing.price_fen)
     payload = _node_payload_from_listing(listing)
+    payload["source_version"] = current_work_version(db, listing.id)
     node = TrainingNode(
         owner_id=buyer.id,
         source_listing_id=listing.id,
@@ -235,7 +361,9 @@ def purchase(
     return order, node
 
 
-def list_nodes(db: Session, user: User, kind: Optional[str] = None) -> list[TrainingNode]:
+def list_nodes(
+    db: Session, user: User, kind: Optional[str] = None
+) -> list[TrainingNode]:
     q = db.query(TrainingNode).filter(TrainingNode.owner_id == user.id)
     if kind and kind != "all":
         q = q.filter(TrainingNode.kind == kind)
@@ -254,14 +382,26 @@ def node_out(node: TrainingNode) -> dict:
         "cover_url": node.cover_url,
         "media": _loads(node.media_json, []),
         "body_text": node.body_text,
-        "purchased_at": node.purchased_at.isoformat() + "Z" if node.purchased_at else None,
+        "purchased_at": node.purchased_at.isoformat() + "Z"
+        if node.purchased_at
+        else None,
         **payload,
     }
 
 
 def assemble(db: Session, user: User, req: AssembleRequest) -> AssembledPlan:
+    from app.services.account_lock import lock_account
+    from app.models.work_versions import AssemblyLineage
+
+    lock_account(user, db)
     if not req.ack_weight or not req.ack_level:
         raise HTTPException(400, "应用到训练前须勾选体重区间与训练水平确认")
+    if req.restored_from_id:
+        source = db.get(AssembledPlan, req.restored_from_id)
+        if not source or source.user_id != user.id:
+            raise HTTPException(404, "历史方案不存在")
+    previous = db.query(AssembledPlan).filter_by(user_id=user.id, active=True).first()
+    previous_id = previous.id if previous else None
 
     # 校验节点归属 + lesson 只能挂学法位
     for day in req.days:
@@ -269,19 +409,23 @@ def assemble(db: Session, user: User, req: AssembleRequest) -> AssembledPlan:
             if ex.from_plan_node_id:
                 n = db.get(TrainingNode, ex.from_plan_node_id)
                 if not n or n.owner_id != user.id:
-                    raise HTTPException(400, f"plan 节点 {ex.from_plan_node_id} 不存在或不属于你")
+                    raise HTTPException(
+                        400, f"plan 节点 {ex.from_plan_node_id} 不存在或不属于你"
+                    )
                 if n.kind != "plan":
                     raise HTTPException(400, "from_plan_node_id 必须是 plan 节点")
             if ex.lesson_node_id:
                 n = db.get(TrainingNode, ex.lesson_node_id)
                 if not n or n.owner_id != user.id:
-                    raise HTTPException(400, f"lesson 节点 {ex.lesson_node_id} 不存在或不属于你")
+                    raise HTTPException(
+                        400, f"lesson 节点 {ex.lesson_node_id} 不存在或不属于你"
+                    )
                 if n.kind != "lesson":
                     raise HTTPException(400, "学法位只能挂 lesson 节点")
 
-    db.query(AssembledPlan).filter(AssembledPlan.user_id == user.id, AssembledPlan.active.is_(True)).update(
-        {"active": False}
-    )
+    db.query(AssembledPlan).filter(
+        AssembledPlan.user_id == user.id, AssembledPlan.active.is_(True)
+    ).update({"active": False})
     plan = AssembledPlan(
         user_id=user.id,
         title=req.title,
@@ -292,6 +436,14 @@ def assemble(db: Session, user: User, req: AssembleRequest) -> AssembledPlan:
         active=True,
     )
     db.add(plan)
+    db.flush()
+    db.add(
+        AssemblyLineage(
+            plan_id=plan.id,
+            previous_id=previous_id,
+            restored_from_id=req.restored_from_id,
+        )
+    )
     db.commit()
     db.refresh(plan)
     return plan

@@ -47,6 +47,8 @@ function submit() {
       exercise: exercise.value,
       created_at: new Date().toISOString(),
       file_name: file.value?.name || '演示视频',
+      source: 'demo',
+      is_demo: true,
     }
     state.ai.unshift(r)
     result.value = state.ai[0]
@@ -66,7 +68,9 @@ function save() {
     sets: '1',
     reps: String(result.value.reps),
     rpe: '—',
-    source: 'ai',
+    source: 'demo',
+    is_demo: true,
+    note: '动作实验室演示次数，未经真实动作识别验证',
     evaluation_id: result.value.eval_id,
   })
   result.value.saved = true
@@ -140,6 +144,9 @@ onBeforeUnmount(() => {
           <h3>{{ issue.problem }}</h3>
           <p>{{ issue.fix }}</p>
         </div>
+        <p class="info-box">
+          写入的是固定演示次数，不代表所选视频的真实识别结果；训练记录会保留演示来源。
+        </p>
         <button class="btn primary full" :disabled="result.saved" @click="save">
           {{ result.saved ? '已写入训练记录' : '将示范次数写入训练记录' }}
         </button></template

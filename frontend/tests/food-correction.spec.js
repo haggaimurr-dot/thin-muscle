@@ -1,0 +1,18 @@
+import { test, expect } from '@playwright/test'
+test.skip(!!process.env.AUTH_E2E, 'Demo recognition')
+test('recognition draft saves only confirmed corrections', async ({ page }) => {
+  await page.goto('/#/nutrition')
+  await page.getByRole('button', { name: '体验演示分析' }).click()
+  const result = page.locator('.meal-result')
+  await expect(result).toBeVisible()
+  await expect(page.locator('.history-row')).toHaveCount(0)
+  await expect(result).toContainText('未提供可验证的数值置信度')
+  await result.getByLabel('修正食物名称').fill('修正后的餐食')
+  await result.getByLabel('蛋白每份估值').fill('50')
+  await result.getByRole('combobox').selectOption('0.5')
+  await page.getByRole('button', { name: '记入今日蛋白', exact: true }).click()
+  await expect(page.locator('.protein-ring strong')).toHaveText('25')
+  await expect(page.locator('.history-row')).toContainText('修正后的餐食')
+  await page.reload()
+  await expect(page.locator('.history-row')).toHaveCount(1)
+})

@@ -1,0 +1,16 @@
+import { test, expect } from '@playwright/test'
+test.skip(!!process.env.AUTH_E2E, 'Local target')
+test('protein target and sources persist and drive overview', async ({ page }) => {
+  await page.goto('/#/nutrition')
+  await page.getByLabel('每日蛋白目标（g）').fill('25')
+  await page.getByRole('button', { name: '保存蛋白目标' }).click()
+  await page.getByRole('button', { name: '+25g', exact: true }).click()
+  await expect(page.locator('.protein-card')).toContainText('今日目标达成')
+  await page.locator('.protein-card summary').click()
+  await expect(page.locator('.protein-card')).toContainText('手动调整与历史差额：25g')
+  await page.reload()
+  await expect(page.getByLabel('每日蛋白目标（g）')).toHaveValue('25')
+  await page.goto('/#/')
+  await expect(page.locator('.protein-line')).toContainText('/ 25 g')
+  await expect(page.locator('.protein-line')).toContainText('今日已达标')
+})

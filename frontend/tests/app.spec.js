@@ -97,11 +97,23 @@ test('market filters, detail, consent, replication and assembly', async ({ page 
     await expect(page.getByRole('dialog')).toHaveCount(0)
   } else await page.getByRole('button', { name: '查看已复刻节点', exact: true }).click()
   await expect(page.locator('.node-card').first()).toBeVisible()
+  const firstNode = page.locator('.node-card').first()
+  await firstNode.getByLabel('节点分类').fill('力量')
+  await firstNode.getByRole('button', { name: '保存分类' }).click()
+  await expect(page.locator('.toast')).toContainText('节点整理已保存')
+  await firstNode.getByRole('button', { name: '收藏节点', exact: true }).click()
+  await expect(firstNode.getByRole('button', { name: '取消节点收藏' })).toBeVisible()
+  await page.getByLabel('仅收藏节点').check()
+  await expect(page.locator('.node-card')).toHaveCount(1)
   await page.getByRole('button', { name: '拼入方案', exact: true }).first().click()
   await expect(page.locator('.compose-day').first()).toBeVisible()
   await page.getByRole('checkbox').nth(0).check()
   await page.getByRole('checkbox').nth(1).check()
   await page.getByRole('button', { name: '应用到本周训练', exact: true }).click()
+  await expect(page.getByRole('dialog')).toContainText('原计划')
+  await page.getByRole('button', { name: '取消替换', exact: true }).click()
+  await page.getByRole('button', { name: '应用到本周训练', exact: true }).click()
+  await page.getByRole('button', { name: '确认替换并应用', exact: true }).click()
   await expect(page.getByRole('status')).toContainText('应用')
   await page.getByRole('link', { name: '查看我的每周计划', exact: true }).click()
   await expect(page.locator('main')).toContainText('每周计划')
@@ -122,9 +134,12 @@ test('AI demo writes report and video links reject unsafe schemes', async ({ pag
   await expect(page.getByRole('status')).toContainText('有效的 HTTP')
   await page.getByLabel('视频链接').fill('https://example.com/demo')
   await page.getByRole('button', { name: '保存视频链接' }).click()
+  await expect(page.getByRole('status')).toContainText('B站视频链接')
+  await page.getByLabel('视频链接').fill('https://www.bilibili.com/video/BV1xx411c7mD')
+  await page.getByRole('button', { name: '保存视频链接' }).click()
   await expect(page.getByRole('dialog').getByRole('link').first()).toHaveAttribute(
     'href',
-    'https://example.com/demo',
+    'https://www.bilibili.com/video/BV1xx411c7mD',
   )
 })
 
@@ -403,9 +418,9 @@ test('badge gallery rewards reflection once per date and keeps earned badges aft
   page,
 }) => {
   await page.goto('/#/badges')
-  await expect(page.locator('.badge-grid .badge-card')).toHaveCount(18)
+  await expect(page.locator('.badge-grid .badge-card')).toHaveCount(22)
   await page.locator('.filter-chips').getByRole('button', { name: '复盘', exact: true }).click()
-  await expect(page.locator('.badge-card')).toHaveCount(2)
+  await expect(page.locator('.badge-card')).toHaveCount(3)
   await page.goto('/#/training')
   await page
     .locator('.exercise-row')
