@@ -132,3 +132,7 @@ class AccountToken(Base):
     purpose: Mapped[str] = mapped_column(String(24))
     email: Mapped[str] = mapped_column(String(254), default="")
     expires_at: Mapped[datetime] = mapped_column(DateTime)
+class BadgeProfile(Base):
+    __tablename__ = "badge_profiles"
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id"), primary_key=True)
+    featured_id: Mapped[str | None] = mapped_column(String(64), nullable=True)

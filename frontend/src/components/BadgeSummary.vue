@@ -5,6 +5,8 @@ import { state } from '../store'
 import { localBadges, nextBadge } from '../badges'
 import Icon from './Icon.vue'
 import BadgeMark from './BadgeMark.vue'
+import WeeklyGoals from './WeeklyGoals.vue'
+import { featuredBadge } from '../badgeProfile'
 const remote = ref(null),
   error = ref(false)
 let controller
@@ -32,13 +34,17 @@ const next = computed(() => nextBadge(data.value?.items || []))
 <template>
   <section class="panel badge-dashboard">
     <div class="row">
-      <BadgeMark v-if="next" :badge="next" small /><span v-else class="metric-icon green"
+      <BadgeMark v-if="featuredBadge || next" :badge="featuredBadge || next" small /><span
+        v-else
+        class="metric-icon green"
         ><Icon name="trophy"
       /></span>
       <div>
         <h2>你的成长徽章</h2>
         <p v-if="data">
-          已获得 {{ data.earned_count }} 枚<span v-if="next">
+          已获得 {{ data.earned_count }} 枚<span v-if="featuredBadge">
+            · 正在佩戴：{{ featuredBadge.title }}</span
+          ><span v-if="next">
             · 下一枚：{{ next.title }}（{{ Math.min(next.current, next.target) }}/{{
               next.target
             }}）</span
@@ -51,4 +57,5 @@ const next = computed(() => nextBadge(data.value?.items || []))
       >进入徽章馆<Icon name="right" :size="15"
     /></RouterLink>
   </section>
+  <WeeklyGoals :goals="data?.weekly_goals" />
 </template>

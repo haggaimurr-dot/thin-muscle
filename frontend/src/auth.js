@@ -1,4 +1,5 @@
 import { reactive } from 'vue'
+import { resetBadgeProfile, refreshBadgeProfile } from './badgeProfile'
 import { api, setCsrf, demoMode } from './api'
 import { connectSync, disconnectSync, state, flushSync, connectOffline } from './store'
 export const auth = reactive({ ready: false, user: null, error: '', offline: false })
@@ -18,6 +19,7 @@ export async function initAuth() {
     auth.offline = false
     auth.user = data.user
     await connectSync(data.user.id)
+    refreshBadgeProfile().catch(() => {})
   } catch (error) {
     const cachedId = localStorage.getItem('tm_offline_user')
     if (!navigator.onLine && cachedId && /^\d+$/.test(cachedId)) {
@@ -41,6 +43,7 @@ export async function initAuth() {
 }
 export async function signIn(credentials, register = false, endpoint = null) {
   const data = await api('/auth/' + (endpoint || (register ? 'register' : 'login')), credentials)
+  resetBadgeProfile()
   setCsrf(data.csrf)
   if (
     localStorage.getItem('tm_offline_user') &&
@@ -50,6 +53,7 @@ export async function signIn(credentials, register = false, endpoint = null) {
   auth.offline = false
   auth.user = data.user
   await connectSync(data.user.id)
+  refreshBadgeProfile().catch(() => {})
 }
 export async function signOut() {
   if (['pending', 'saving'].includes(state.syncStatus)) {
@@ -62,6 +66,7 @@ export async function signOut() {
   localStorage.removeItem('tm_offline_user')
   setCsrf('')
   auth.user = null
+  resetBadgeProfile()
   disconnectSync()
 }
 export function finishAccountAction(eraseCache = false) {
@@ -85,6 +90,7 @@ export function finishAccountAction(eraseCache = false) {
 window.addEventListener('session-expired', () => {
   auth.user = null
   setCsrf('')
+  resetBadgeProfile()
   disconnectSync()
   auth.error = '登录已过期，请重新登录；待同步记录已保留在本机缓存'
 })

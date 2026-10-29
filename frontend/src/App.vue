@@ -11,6 +11,7 @@ import { demoMode } from './api'
 import { reloadCloud, retrySync } from './store'
 import Modal from './components/Modal.vue'
 import BadgeMark from './components/BadgeMark.vue'
+import { featuredBadge } from './badgeProfile'
 import { state, exportData, parseBackup, restoreBackup, notify } from './store'
 import { backupSummary } from './store'
 onMounted(initAuth)
@@ -135,7 +136,9 @@ function confirmRestore() {
           账号安全
         </button>
         <div class="profile">
-          <span class="avatar">我</span>
+          <BadgeMark v-if="featuredBadge" :badge="featuredBadge" small /><span v-else class="avatar"
+            >我</span
+          >
           <div>
             <strong>我的训练空间</strong
             ><small>{{ demoMode ? '演示账号' : auth.user?.nickname || '尚未登录' }}</small>
