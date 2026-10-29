@@ -29,6 +29,9 @@ BILI_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 )
+# Bilibili's WAF serves a challenge page to browser-UA API requests from
+# server IPs (UA/TLS fingerprint mismatch); a curl-style UA passes.
+BILI_API_UA = "curl/8.5.0"
 MAX_HOPS = 5
 REDIRECT_STATUS = (301, 302, 303, 307, 308)
 
@@ -116,12 +119,13 @@ def resolve_video(body: ResolveIn, user: User = Depends(get_current_user)):
                 headers={"User-Agent": BILI_UA},
             ) as client:
                 bvid = resolve_b23(raw, client)
-                if bvid:
-                    meta = fetch_video_meta(bvid, client)
+                # NOTE: meta lookup uses its own client (see fetch_bvid_meta)
+                # because the view API needs a different User-Agent.
         except httpx.HTTPError:
             raise HTTPException(502, "短链接解析失败，请稍后重试")
         if not bvid:
             raise HTTPException(422, "短链接未指向 B站视频，请确认链接有效")
+        meta = fetch_bvid_meta(bvid)
     else:
         raise HTTPException(422, "只支持 B站视频链接或 b23.tv 短链接")
     return {
@@ -138,7 +142,7 @@ def fetch_bvid_meta(bvid: str) -> dict:
     # break resolving (e.g. broken proxy env in some runtimes).
     try:
         with httpx.Client(
-            timeout=8.0, trust_env=False, headers={"User-Agent": BILI_UA}
+            timeout=8.0, trust_env=False, headers={"User-Agent": BILI_API_UA}
         ) as client:
             return fetch_video_meta(bvid, client)
     except Exception:
