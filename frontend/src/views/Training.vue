@@ -300,12 +300,32 @@ function bvid(url) {
     return ''
   }
 }
-function bindVideo() {
-  const url = safeUrl(videoUrl.value)
-  if (!url || !bvid(url)) {
-    notify(
-      '请输入有效的 HTTP 或 HTTPS B站视频链接（bilibili.com/video/BV…）；短链接请先在浏览器展开',
-    )
+async function bindVideo() {
+  let url = safeUrl(videoUrl.value)
+  if (!url) {
+    notify('请输入有效的 HTTP 或 HTTPS 链接')
+    return
+  }
+  if (!bvid(url)) {
+    let host = ''
+    try {
+      host = new URL(url).hostname
+    } catch {
+      host = ''
+    }
+    if (host === 'b23.tv') {
+      try {
+        notify('正在解析短链接…')
+        const data = await api('/videos/resolve', { url })
+        url = data.url
+      } catch (e) {
+        notify(e.message || '短链接解析失败')
+        return
+      }
+    }
+  }
+  if (!bvid(url)) {
+    notify('请输入有效的 B站视频链接（bilibili.com/video/BV…）或 b23.tv 短链接')
     return
   }
   state.videos[video.value] = [{ title: videoTitle.value || video.value, url }]

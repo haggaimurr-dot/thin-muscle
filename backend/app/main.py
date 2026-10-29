@@ -22,6 +22,7 @@ from app.api import (
     work_versions,
     profile,
     user_foods,
+    videos,
 )
 from app.core.config import settings
 from app.core.db import Base, SessionLocal, engine
@@ -56,6 +57,7 @@ app.include_router(rank_privacy.router, prefix="/api/v1")
 app.include_router(work_versions.router, prefix="/api/v1")
 app.include_router(profile.router, prefix="/api/v1")
 app.include_router(home.router, prefix="/api/v1")
+app.include_router(videos.router, prefix="/api/v1")
 
 
 def _rank_hourly_worker(stop):
