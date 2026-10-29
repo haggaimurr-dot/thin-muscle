@@ -352,6 +352,9 @@ def delete_account(
             MarketReply.comment_id.in_(market_comment_ids),
         )
     ).delete(synchronize_session=False)
+    from app.models.user_food import UserFood
+
+    db.query(UserFood).filter_by(user_id=user.id).delete(synchronize_session=False)
     for model in [
         FeedPost,
         MarketLike,

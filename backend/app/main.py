@@ -21,6 +21,7 @@ from app.api import (
     rank_privacy,
     work_versions,
     profile,
+    user_foods,
 )
 from app.core.config import settings
 from app.core.db import Base, SessionLocal, engine
@@ -40,6 +41,7 @@ app.include_router(photos.router, prefix="/api/v1")
 app.include_router(payments.router, prefix="/api/v1")
 app.include_router(identity.router, prefix="/api/v1")
 app.include_router(food.router, prefix="/api/v1")
+app.include_router(user_foods.router, prefix="/api/v1")
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(account_security.router, prefix="/api/v1")
 app.include_router(reminders.router, prefix="/api/v1")

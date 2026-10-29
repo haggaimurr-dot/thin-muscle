@@ -10,11 +10,13 @@ import {
   sumFoods,
 } from '../food-catalog'
 import { state, notify, uid, ymd, monday, changeProtein } from '../store'
+import UserFoods from './UserFoods.vue'
 
 const query = ref(''),
   category = ref('全部'),
   page = ref(1),
-  rows = ref([])
+  rows = ref([]),
+  source = ref('reference')
 const matches = computed(() => findFoods(query.value, category.value))
 const pageSize = 18
 const visibleFoods = computed(() =>
@@ -66,7 +68,7 @@ function confirm() {
       week,
       day,
       created_at: now.toISOString(),
-      source: food.derived ? 'portion-estimate' : 'food-catalog',
+      source: food.userFood ? 'user-food' : food.derived ? 'portion-estimate' : 'food-catalog',
       status: 'done',
       base_kcal: food.kcal,
       base_protein_g: food.protein,
@@ -77,7 +79,8 @@ function confirm() {
       sugar_warn: false,
       logged_to_protein: true,
       logged_grams: protein,
-      advice: `${fmt(grams, 2)}g 可食部分${row.unit !== 'g' ? `（${row.quantity}${row.unit}，每${row.unit}${row.unitGrams}g，参考份量）` : ''}；每100g ${fmt(food.kcal)} kcal。来源：${foodSource.source}，编号 ${food.sourceId || food.id}。${food.derived ? food.description : ''}`,
+      unknown_macros: food.unknownMacros || [],
+      advice: `${fmt(grams, 2)}g 可食部分${row.unit !== 'g' ? `（${row.quantity}${row.unit}，每${row.unit}${row.unitGrams}g，参考份量）` : ''}；每100g ${fmt(food.kcal)} kcal。来源：${food.sourceLabel || foodSource.source}，编号 ${food.sourceId || food.id}。${food.derived ? food.description : ''}${food.unknownMacros?.length ? '未提供的营养值未参与合计；仅记录已知营养。' : ''}`,
     }
   })
   state.meals.unshift(...meals)
@@ -134,6 +137,14 @@ function confirm() {
           </div>
         </div>
         <div class="food-directory">
+          <div class="segmented" aria-label="食品来源">
+            <button :class="{ active: source === 'reference' }" @click="source = 'reference'">
+              基础食品
+            </button>
+            <button :class="{ active: source === 'user' }" @click="source = 'user'">
+              自建与共享食品
+            </button>
+          </div>
           <div class="food-filters">
             <label
               >搜索食品<input v-model="query" type="search" placeholder="米饭、面、馍、面包…"
@@ -145,38 +156,48 @@ function confirm() {
               </select></label
             >
           </div>
-          <p class="tiny">
-            共 {{ matches.length }} 项 · 热量单位 kcal（千卡）· 每克热量 = 每100克热量 ÷ 100
-          </p>
-          <div class="food-grid">
-            <article v-for="food in visibleFoods" :key="food.id" class="food-card">
-              <span class="tiny">{{ food.category }}</span>
-              <h3>{{ food.name }}</h3>
-              <strong>{{ fmt(food.kcal / 100, 3) }} <small>kcal / 克</small></strong>
-              <p>{{ fmt(food.kcal) }} kcal / 100g</p>
-              <details>
-                <summary>食材状态与来源</summary>
-                <p>{{ food.description || '原资料未标注处理状态，请核对食品名称。' }}</p>
-                <p>
-                  原名：{{ food.originalName }} · 来源编号 {{ food.sourceId || food.id
-                  }}{{ food.derived ? ' · 配方估算' : '' }}
-                </p>
-              </details>
-              <button class="btn small-btn" :aria-label="`添加${food.name}`" @click="add(food)">
-                ＋ 加入组合
+          <UserFoods
+            v-if="source === 'user'"
+            :query="query"
+            :category="category"
+            @select="add($event)"
+          />
+          <template v-else>
+            <p class="tiny">
+              共 {{ matches.length }} 项 · 热量单位 kcal（千卡）· 每克热量 = 每100克热量 ÷ 100
+            </p>
+            <div class="food-grid">
+              <article v-for="food in visibleFoods" :key="food.id" class="food-card">
+                <span class="tiny">{{ food.category }}</span>
+                <h3>{{ food.name }}</h3>
+                <strong>{{ fmt(food.kcal / 100, 3) }} <small>kcal / 克</small></strong>
+                <p>{{ fmt(food.kcal) }} kcal / 100g</p>
+                <details>
+                  <summary>食材状态与来源</summary>
+                  <p>{{ food.description || '原资料未标注处理状态，请核对食品名称。' }}</p>
+                  <p>
+                    原名：{{ food.originalName }} · 来源编号 {{ food.sourceId || food.id
+                    }}{{ food.derived ? ' · 配方估算' : '' }}
+                  </p>
+                </details>
+                <button class="btn small-btn" :aria-label="`添加${food.name}`" @click="add(food)">
+                  ＋ 加入组合
+                </button>
+              </article>
+            </div>
+            <p v-if="!matches.length" class="empty-state">
+              没有找到匹配食品，试试其他名称或分类，也可以使用下方手动记录。
+            </p>
+            <div class="row between food-pagination">
+              <button class="btn small-btn" :disabled="page <= 1" @click="page--">
+                上一页食品
               </button>
-            </article>
-          </div>
-          <p v-if="!matches.length" class="empty-state">
-            没有找到匹配食品，试试其他名称或分类，也可以使用下方手动记录。
-          </p>
-          <div class="row between food-pagination">
-            <button class="btn small-btn" :disabled="page <= 1" @click="page--">上一页食品</button>
-            <span>第 {{ page }} / {{ pageCount }} 页</span>
-            <button class="btn small-btn" :disabled="page >= pageCount" @click="page++">
-              下一页食品
-            </button>
-          </div>
+              <span>第 {{ page }} / {{ pageCount }} 页</span>
+              <button class="btn small-btn" :disabled="page >= pageCount" @click="page++">
+                下一页食品
+              </button>
+            </div>
+          </template>
         </div>
       </div>
       <div class="food-combination">
@@ -228,6 +249,9 @@ function confirm() {
             {{ fmt(rowGrams(row), 2) }}g × {{ fmt(row.food.kcal / 100, 3) }} kcal/g ≈
             <strong>{{ fmt((row.food.kcal * rowGrams(row)) / 100) }} kcal</strong>
           </p>
+          <p v-if="row.food.unknownMacros?.length" class="tiny">
+            部分营养值未提供，仅已知数值参与合计。
+          </p>
           <p v-else class="alert" role="alert">请输入正数，单项总重量不能超过5000g。</p>
         </article>
         <div class="combination-total" aria-live="polite">
@@ -235,6 +259,9 @@ function confirm() {
           <p>
             蛋白 {{ fmt(total.protein) }}g · 碳水 {{ fmt(total.carb) }}g · 脂肪
             {{ fmt(total.fat) }}g
+          </p>
+          <p v-if="rows.some((r) => r.food.unknownMacros?.length)">
+            营养合计不含未提供项，未提供不代表零含量。
           </p>
           <p v-if="invalid" role="alert">有食品份量无效，请修正后再确认。</p>
         </div>

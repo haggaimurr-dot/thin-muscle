@@ -171,7 +171,7 @@ const filteredMeals = computed(() =>
 )
 function editMeal(m, copy = false) {
   editingId.value = copy ? null : m.meal_id
-  const weighed = ['food-catalog', 'portion-estimate'].includes(m.source)
+  const weighed = ['food-catalog', 'portion-estimate', 'user-food'].includes(m.source)
   const nutrition = (key) => (weighed ? Math.round(m[key] * m.portion * 10) / 10 : m[key])
   manual.value = {
     title: m.title,
@@ -468,7 +468,7 @@ onBeforeUnmount(() => {
           <span class="pill">{{
             result.source === 'manual'
               ? '手动记录'
-              : ['food-catalog', 'portion-estimate'].includes(result.source)
+              : ['food-catalog', 'portion-estimate', 'user-food'].includes(result.source)
                 ? '食品目录估算'
                 : result.is_estimate
                   ? 'AI 估算结果'
@@ -476,7 +476,7 @@ onBeforeUnmount(() => {
           }}</span>
         </div>
         <p
-          v-if="!['manual', 'food-catalog', 'portion-estimate'].includes(result.source)"
+          v-if="!['manual', 'food-catalog', 'portion-estimate', 'user-food'].includes(result.source)"
           class="info-box"
         >
           识别结果是估值；服务未提供可验证的数值置信度。请核对并修正后再计入，未确认的识别草稿不会存入历史记录。
@@ -487,7 +487,7 @@ onBeforeUnmount(() => {
             :disabled="result.logged_to_protein"
             maxlength="128"
         /></label>
-        <p v-if="['food-catalog', 'portion-estimate'].includes(result.source)">
+        <p v-if="['food-catalog', 'portion-estimate', 'user-food'].includes(result.source)">
           食用重量 {{ Number((result.portion * 100).toFixed(2)) }}g · 以下营养基准为每100g
         </p>
         <label v-else class="row between"
@@ -516,7 +516,13 @@ onBeforeUnmount(() => {
                 step="0.1"
                 :disabled="result.logged_to_protein"
             /></label>
-            <strong>{{ scaled(key) }}</strong>
+            <strong>{{
+              result.unknown_macros?.includes(
+                { base_protein_g: 'protein', base_carb_g: 'carb', base_fat_g: 'fat' }[key],
+              )
+                ? '未提供'
+                : scaled(key)
+            }}</strong>
             ><span>{{ label }} · {{ unit }}</span>
           </div>
         </div>
@@ -557,12 +563,17 @@ onBeforeUnmount(() => {
         <p>
           {{ mealDate(m) }} ·
           {{
-            ['food-catalog', 'portion-estimate'].includes(m.source)
+            ['food-catalog', 'portion-estimate', 'user-food'].includes(m.source)
               ? Number((m.portion * 100).toFixed(2)) + 'g'
               : m.portion + ' 份'
           }}
           · {{ Number((m.base_kcal * m.portion).toFixed(1)) }} kcal · 蛋白
-          {{ Math.round(m.base_protein_g * m.portion) }}g ·
+          {{
+            m.unknown_macros?.includes('protein')
+              ? '未提供'
+              : Math.round(m.base_protein_g * m.portion) + 'g'
+          }}
+          ·
           {{ m.logged_to_protein ? '已记入' : '未记入' }}
         </p>
       </div>
