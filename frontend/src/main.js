@@ -9,6 +9,8 @@ import Community from './views/Community.vue'
 import Market from './views/Market.vue'
 import Tools from './views/Tools.vue'
 import './style.css'
+import { applyTheme } from './store'
+applyTheme()
 const router = createRouter({
   history: createWebHashHistory(),
   routes: [

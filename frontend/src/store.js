@@ -50,6 +50,7 @@ export const state = reactive({
   localUpdatedAt: '',
   remoteUpdatedAt: '',
   networkOnline: navigator.onLine,
+  theme: read('tm_theme', 'light'),
 })
 const keys = {
   phase: 'tm_phase',
@@ -121,6 +122,18 @@ for (const [field, key] of Object.entries(keys))
     { deep: true, flush: 'sync' },
   )
 let toastTimer
+/* 主题：light=浅 white=白 black=黑，仅存本地不云同步 */
+export function applyTheme() {
+  const t = ['light', 'white', 'black'].includes(state.theme) ? state.theme : 'light'
+  document.documentElement.dataset.theme = t
+}
+export function setTheme(t) {
+  state.theme = t
+  try {
+    localStorage.setItem('tm_theme', JSON.stringify(t))
+  } catch {}
+  applyTheme()
+}
 export function notify(message) {
   state.toast = message
   clearTimeout(toastTimer)

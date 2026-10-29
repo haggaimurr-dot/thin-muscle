@@ -12,8 +12,13 @@ import { reloadCloud, retrySync } from './store'
 import Modal from './components/Modal.vue'
 import BadgeMark from './components/BadgeMark.vue'
 import { featuredBadge } from './badgeProfile'
-import { state, exportData, parseBackup, restoreBackup, notify } from './store'
+import { state, exportData, parseBackup, restoreBackup, notify, setTheme } from './store'
 import { backupSummary } from './store'
+const themeOpts = [
+  { v: 'light', l: '浅' },
+  { v: 'white', l: '白' },
+  { v: 'black', l: '黑' },
+]
 onMounted(initAuth)
 onMounted(() => {
   if (route.query.identity_bound === '1') {
@@ -135,6 +140,19 @@ function confirmRestore() {
         <button v-if="auth.user && !demoMode" class="nav-link" @click="openSecurity">
           账号安全
         </button>
+        <div class="theme-switch">
+          <span class="tiny-label">主题</span>
+          <div class="theme-opts" role="group" aria-label="主题选择">
+            <button
+              v-for="o in themeOpts"
+              :key="o.v"
+              :class="{ on: state.theme === o.v }"
+              @click="setTheme(o.v)"
+            >
+              {{ o.l }}
+            </button>
+          </div>
+        </div>
         <div class="profile">
           <BadgeMark v-if="featuredBadge" :badge="featuredBadge" small /><span v-else class="avatar"
             >我</span
