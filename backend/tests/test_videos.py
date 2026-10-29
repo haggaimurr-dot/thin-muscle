@@ -15,6 +15,14 @@ def mock_client():
             )
         if request.url.host == "b23.tv":
             return httpx.Response(302, headers={"location": "https://b23.tv/loop"})
+        if request.url.host == "api.bilibili.com":
+            return httpx.Response(
+                200,
+                json={
+                    "code": 0,
+                    "data": {"aid": 123, "cid": 456, "bvid": "BV1GJ411x7h7"},
+                },
+            )
         return httpx.Response(404)
 
     return httpx.Client(transport=httpx.MockTransport(handler), follow_redirects=False)
@@ -41,6 +49,20 @@ class VideoResolveTests(unittest.TestCase):
     def test_resolve_b23_rejects_redirect_loop(self):
         self.assertEqual(videos.resolve_b23("https://b23.tv/other", mock_client()), "")
 
+    def test_fetch_video_meta(self):
+        meta = videos.fetch_video_meta("BV1GJ411x7h7", mock_client())
+        self.assertEqual(meta, {"aid": 123, "cid": 456})
+
+    def test_embed_url_prefers_official_format(self):
+        self.assertEqual(
+            videos.embed_url("BV1GJ411x7h7", {"aid": 123, "cid": 456}),
+            "https://player.bilibili.com/player.html?aid=123&bvid=BV1GJ411x7h7&cid=456&page=1",
+        )
+        self.assertEqual(
+            videos.embed_url("BV1GJ411x7h7", {}),
+            "https://player.bilibili.com/player.html?bvid=BV1GJ411x7h7&autoplay=0",
+        )
+
     def test_endpoint(self):
         with TestClient(app) as client:
             reg = client.post(
@@ -58,6 +80,7 @@ class VideoResolveTests(unittest.TestCase):
             self.assertEqual(ok.status_code, 200, ok.text)
             self.assertEqual(ok.json()["bvid"], "BV1GJ411x7h7")
             self.assertTrue(ok.json()["url"].endswith("/video/BV1GJ411x7h7"))
+            self.assertIn("embedUrl", ok.json())
 
             bad = client.post(
                 "/api/v1/videos/resolve",

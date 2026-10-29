@@ -34,7 +34,7 @@ const route = useRoute(),
   videoTitle = ref(''),
   videoUrl = ref(''),
   deleteTarget = ref(null),
-  playingBvid = ref('')
+  playingEmbed = ref('')
 const selectedWeek = ref(week),
   previewPhase = ref('')
 const selectedDate = computed(() => {
@@ -264,7 +264,7 @@ function complete() {
 }
 function openVideo(name) {
   video.value = name
-  playingBvid.value = ''
+  playingEmbed.value = ''
   videoTitle.value = ''
   videoUrl.value = ''
 }
@@ -301,36 +301,26 @@ function bvid(url) {
   }
 }
 async function bindVideo() {
-  let url = safeUrl(videoUrl.value)
+  const url = safeUrl(videoUrl.value)
   if (!url) {
     notify('请输入有效的 HTTP 或 HTTPS 链接')
     return
   }
-  if (!bvid(url)) {
-    let host = ''
-    try {
-      host = new URL(url).hostname
-    } catch {
-      host = ''
-    }
-    if (host === 'b23.tv') {
-      try {
-        notify('正在解析短链接…')
-        const data = await api('/videos/resolve', { url })
-        url = data.url
-      } catch (e) {
-        notify(e.message || '短链接解析失败')
-        return
-      }
-    }
+  try {
+    notify('正在解析视频链接…')
+    const data = await api('/videos/resolve', { url })
+    state.videos[video.value] = [
+      { title: videoTitle.value || video.value, url: data.url, embedUrl: data.embedUrl || '' },
+    ]
+    notify('视频已绑定')
+    videoUrl.value = ''
+  } catch (e) {
+    notify(e.message || '视频链接无效')
   }
-  if (!bvid(url)) {
-    notify('请输入有效的 B站视频链接（bilibili.com/video/BV…）或 b23.tv 短链接')
-    return
-  }
-  state.videos[video.value] = [{ title: videoTitle.value || video.value, url }]
-  notify('视频已绑定')
-  videoUrl.value = ''
+}
+function playVideo(v) {
+  playingEmbed.value =
+    v.embedUrl || `https://player.bilibili.com/player.html?bvid=${bvid(v.url)}&autoplay=0`
 }
 function removeLog() {
   const { key, id } = deleteTarget.value
@@ -708,7 +698,7 @@ function previous() {
         target="_blank"
         rel="noopener noreferrer"
         >{{ v.title }} ↗</a
-      ><button v-if="bvid(v.url)" class="btn small-btn" @click="playingBvid = bvid(v.url)">
+      ><button v-if="bvid(v.url)" class="btn small-btn" @click="playVideo(v)">
         内嵌试播</button
       ><button
         v-if="i === 0 && state.videos[video]"
@@ -720,15 +710,15 @@ function previous() {
       </button>
     </div>
     <iframe
-      v-if="playingBvid"
+      v-if="playingEmbed"
       class="embedded-video"
-      :src="`https://player.bilibili.com/player.html?bvid=${playingBvid}&autoplay=0`"
+      :src="playingEmbed"
       title="B站动作教学视频"
       allow="fullscreen"
       referrerpolicy="no-referrer"
       allowfullscreen
     ></iframe>
-    <p v-if="playingBvid" class="info-box">
+    <p v-if="playingEmbed" class="info-box">
       若播放器空白、视频失效或被限制，请使用上方原链接查看；也可在下方重新绑定视频。链接格式校验不能保证远端可播放。
     </p>
     <p v-if="!videos.length" class="muted">还没有教学视频，可以绑定自己的链接。</p>
